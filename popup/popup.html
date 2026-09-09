@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HackFill - Hackathon AutoFill</title>
+  <link rel="stylesheet" href="popup.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo-icon">⚡</div>
+        <div>
+          <h1 class="brand-title">HackFill</h1>
+          <p class="brand-sub">Hackathon & Event AutoFill</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="popoutBtn" class="btn btn-secondary btn-sm" title="Open persistent side window (Stays open while filling forms!)">
+          <span>🗗 Pop Out</span>
+        </button>
+        <button id="quickAutofillBtn" class="btn btn-primary btn-sm" title="Autofill current page (Alt+Shift+F)">
+          <span>⚡ AutoFill Page</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Quick Action Bar -->
+    <div class="quick-bar">
+      <button id="quickLogBtn" class="quick-chip">
+        <span>📌 Log Current Event</span>
+      </button>
+      <span id="pageDetectBadge" class="badge badge-detecting">Detecting form...</span>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs" role="tablist">
+      <button class="nav-tab active" data-tab="profile" role="tab">
+        <span class="tab-icon">👤</span> My Profile
+      </button>
+      <button class="nav-tab" data-tab="teammates" role="tab">
+        <span class="tab-icon">👥</span> Teammates <span class="tab-badge" id="teammateCount">0</span>
+      </button>
+      <button class="nav-tab" data-tab="snippets" role="tab">
+        <span class="tab-icon">📝</span> Answers
+      </button>
+      <button class="nav-tab" data-tab="tracker" role="tab">
+        <span class="tab-icon">🏆</span> Tracker <span class="tab-badge" id="trackerCount">0</span>
+      </button>
+      <button class="nav-tab" data-tab="settings" role="tab">
+        <span class="tab-icon">⚙️</span>
+      </button>
+    </nav>
+
+    <!-- Main Content Panels -->
+    <main class="content-area">
+      <!-- 1. MY PROFILE TAB -->
+      <section id="tab-profile" class="tab-pane active">
+        <form id="profileForm">
+          <div class="form-section">
+            <h3 class="section-title">Personal Details</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="fullName">Full Name</label>
+                <input type="text" id="fullName" name="fullName" placeholder="Ada Lovelace" required>
+              </div>
+              <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" placeholder="ada@domain.com" required>
+              </div>
+              <div class="form-group">
+                <label for="phone">Phone / WhatsApp</label>
+                <input type="tel" id="phone" name="phone" placeholder="+1 (555) 019-2834">
+              </div>
+              <div class="form-group">
+                <label for="location">City & Country</label>
+                <input type="text" id="location" name="location" placeholder="San Francisco, USA">
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">Profiles & Socials</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="github">GitHub Profile URL</label>
+                <div class="input-with-action">
+                  <input type="url" id="github" name="github" placeholder="https://github.com/username">
+                  <button type="button" class="btn-copy-field" data-target="github" title="Copy URL">📋</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="linkedin">LinkedIn Profile URL</label>
+                <div class="input-with-action">
+                  <input type="url" id="linkedin" name="linkedin" placeholder="https://linkedin.com/in/username">
+                  <button type="button" class="btn-copy-field" data-target="linkedin" title="Copy URL">📋</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="portfolio">Portfolio / Website</label>
+                <div class="input-with-action">
+                  <input type="url" id="portfolio" name="portfolio" placeholder="https://myportfolio.dev">
+                  <button type="button" class="btn-copy-field" data-target="portfolio" title="Copy URL">📋</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="resume">Resume Link (Drive / Dropbox)</label>
+                <div class="input-with-action">
+                  <input type="url" id="resume" name="resume" placeholder="https://drive.google.com/file/d/...">
+                  <button type="button" class="btn-copy-field" data-target="resume" title="Copy URL">📋</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="discord">Discord Tag / Username</label>
+                <div class="input-with-action">
+                  <input type="text" id="discord" name="discord" placeholder="username#1234">
+                  <button type="button" class="btn-copy-field" data-target="discord" title="Copy">📋</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="devfolio">Devpost / Devfolio URL</label>
+                <div class="input-with-action">
+                  <input type="url" id="devfolio" name="devfolio" placeholder="https://devpost.com/username">
+                  <button type="button" class="btn-copy-field" data-target="devfolio" title="Copy URL">📋</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">Education & Logistics</h3>
+            <div class="form-grid">
+              <div class="form-group full-width">
+                <label for="college">College / University Name</label>
+                <input type="text" id="college" name="college" placeholder="Stanford University">
+              </div>
+              <div class="form-group">
+                <label for="degree">Degree / Major</label>
+                <input type="text" id="degree" name="degree" placeholder="B.S. Computer Science">
+              </div>
+              <div class="form-group">
+                <label for="gradYear">Graduation Year</label>
+                <input type="text" id="gradYear" name="gradYear" placeholder="2026">
+              </div>
+              <div class="form-group full-width">
+                <label for="secId">College / Student ID (SEC ID / Roll No)</label>
+                <div class="input-with-action">
+                  <input type="text" id="secId" name="secId" placeholder="e.g. 21CS104 / SEC-9821">
+                  <button type="button" class="btn-copy-field" data-target="secId" title="Copy ID">📋</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="tshirt">T-Shirt Size</label>
+                <select id="tshirt" name="tshirt">
+                  <option value="">Select size</option>
+                  <option value="XS">XS (Extra Small)</option>
+                  <option value="S">S (Small)</option>
+                  <option value="M">M (Medium)</option>
+                  <option value="L">L (Large)</option>
+                  <option value="XL">XL (Extra Large)</option>
+                  <option value="XXL">XXL (2X Large)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="diet">Dietary Restrictions</label>
+                <select id="diet" name="diet">
+                  <option value="None">None / No restrictions</option>
+                  <option value="Vegetarian">Vegetarian</option>
+                  <option value="Vegan">Vegan</option>
+                  <option value="Halal">Halal</option>
+                  <option value="Kosher">Kosher</option>
+                  <option value="Gluten-Free">Gluten-Free</option>
+                  <option value="Jain">Jain</option>
+                </select>
+              </div>
+              <div class="form-group full-width">
+                <label for="emergency">Emergency Contact (Name & Phone)</label>
+                <input type="text" id="emergency" name="emergency" placeholder="John Doe (+1 555-0199)">
+              </div>
+            </div>
+          </div>
+
+          <!-- Custom Variables Section -->
+          <div class="form-section">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+              <h3 class="section-title" style="margin-bottom:0;">Custom Variables & Hackathon IDs</h3>
+              <button type="button" id="addCustomVarBtn" class="btn btn-secondary btn-sm">+ Add Variable</button>
+            </div>
+            <p class="section-desc">Add any custom fields required by specific hackathons (e.g. SEC ID, HackerRank, Telegram, Team Code, Aadhaar/Gov ID). These will auto-fill matching form questions!</p>
+            <div id="customVarsContainer" style="display:flex; flex-direction:column; gap:8px;">
+              <!-- Dynamic custom variable rows -->
+            </div>
+          </div>
+
+          <div class="form-actions-sticky">
+            <div style="display:flex; align-items:center; justify-content:space-between; width:100%; gap:10px;">
+              <div id="autoSaveStatus" class="autosave-status">
+                <span class="autosave-dot"></span> <span id="autoSaveText">All changes saved</span>
+              </div>
+              <button type="submit" class="btn btn-primary" style="padding: 7px 18px;">
+                💾 Save Now
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- 2. TEAMMATES VAULT TAB -->
+      <section id="tab-teammates" class="tab-pane">
+        <div class="pane-header">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="teammateSearch" placeholder="Search friends by name, skill, email...">
+          </div>
+          <button id="addTeammateBtn" class="btn btn-secondary btn-sm">
+            + Add Teammate
+          </button>
+        </div>
+
+        <div class="squad-info-banner">
+          <span>💡 <strong>Tip:</strong> Toggle <strong>Squad Member #</strong> on teammates to automatically fill "Teammate 2", "Teammate 3" fields in team forms.</span>
+        </div>
+
+        <!-- Teammate Cards Container -->
+        <div id="teammatesList" class="cards-list">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- Teammate Form Modal / Drawer -->
+        <div id="teammateModal" class="modal-overlay hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h3 id="teammateModalTitle">Add Teammate</h3>
+              <button id="closeTeammateModal" class="btn-close">&times;</button>
+            </div>
+            <form id="teammateForm">
+              <input type="hidden" id="teammateId" name="id">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="tmName">Full Name *</label>
+                  <input type="text" id="tmName" name="name" required placeholder="Alex Smith">
+                </div>
+                <div class="form-group">
+                  <label for="tmEmail">Email *</label>
+                  <input type="email" id="tmEmail" name="email" required placeholder="alex@domain.com">
+                </div>
+                <div class="form-group">
+                  <label for="tmPhone">Phone</label>
+                  <input type="tel" id="tmPhone" name="phone" placeholder="+1 555 0123">
+                </div>
+                <div class="form-group">
+                  <label for="tmCollege">College / School</label>
+                  <input type="text" id="tmCollege" name="college" placeholder="MIT">
+                </div>
+                <div class="form-group">
+                  <label for="tmSecId">College / SEC ID</label>
+                  <input type="text" id="tmSecId" name="secId" placeholder="e.g. 21CS105">
+                </div>
+                <div class="form-group">
+                  <label for="tmGithub">GitHub URL</label>
+                  <input type="url" id="tmGithub" name="github" placeholder="https://github.com/alexsmith">
+                </div>
+                <div class="form-group">
+                  <label for="tmLinkedin">LinkedIn URL</label>
+                  <input type="url" id="tmLinkedin" name="linkedin" placeholder="https://linkedin.com/in/alexsmith">
+                </div>
+                <div class="form-group">
+                  <label for="tmResume">Resume Link</label>
+                  <input type="url" id="tmResume" name="resume" placeholder="https://drive.google.com/...">
+                </div>
+                <div class="form-group">
+                  <label for="tmDiscord">Discord Tag</label>
+                  <input type="text" id="tmDiscord" name="discord" placeholder="alex#0001">
+                </div>
+                <div class="form-group">
+                  <label for="tmTshirt">T-Shirt Size</label>
+                  <select id="tmTshirt" name="tshirt">
+                    <option value="">Select size</option>
+                    <option value="S">S</option>
+                    <option value="M">M</option>
+                    <option value="L">L</option>
+                    <option value="XL">XL</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="tmDiet">Diet</label>
+                  <select id="tmDiet" name="diet">
+                    <option value="None">None</option>
+                    <option value="Vegetarian">Vegetarian</option>
+                    <option value="Vegan">Vegan</option>
+                    <option value="Halal">Halal</option>
+                    <option value="Kosher">Kosher</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Teammate Custom Variables -->
+              <div style="margin-top:10px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+                  <label style="margin:0;font-size:11px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Custom Variables (Reg No, HackerRank, etc.)</label>
+                  <div style="display:flex;gap:4px;">
+                    <button type="button" id="syncTmCustomVarsBtn" class="btn btn-secondary btn-sm" title="Import variable names from your profile">🔄 Sync Profile Vars</button>
+                    <button type="button" id="addTmCustomVarBtn" class="btn btn-secondary btn-sm">+ Add</button>
+                  </div>
+                </div>
+                <p style="font-size:10px;color:#64748b;margin:0 0 6px;">These will auto-fill matching fields in forms for this teammate.</p>
+                <div id="tmCustomVarsContainer" style="display:flex;flex-direction:column;gap:6px;"></div>
+              </div>
+
+              <div class="modal-footer">
+                <button type="button" id="cancelTeammateBtn" class="btn btn-secondary">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Teammate</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. ESSAY SNIPPETS TAB -->
+      <section id="tab-snippets" class="tab-pane">
+        <div class="pane-header">
+          <p class="pane-sub">Reusable answers for essays, pitches, and bio questions.</p>
+          <button id="addSnippetBtn" class="btn btn-secondary btn-sm">+ New Snippet</button>
+        </div>
+
+        <div id="snippetsList" class="cards-list">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- Snippet Modal -->
+        <div id="snippetModal" class="modal-overlay hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h3 id="snippetModalTitle">Add Snippet</h3>
+              <button id="closeSnippetModal" class="btn-close">&times;</button>
+            </div>
+            <form id="snippetForm">
+              <input type="hidden" id="snippetId" name="id">
+              <div class="form-group">
+                <label for="snipTitle">Title / Question Prompt *</label>
+                <input type="text" id="snipTitle" name="title" required placeholder="e.g. Why participate? / Elevator Pitch">
+              </div>
+              <div class="form-group">
+                <label for="snipCategory">Category</label>
+                <select id="snipCategory" name="category">
+                  <option value="Bio">Personal Bio</option>
+                  <option value="Pitch">Project Pitch</option>
+                  <option value="Experience">Past Hackathons / Experience</option>
+                  <option value="Motivation">Why this hackathon?</option>
+                  <option value="Custom">Custom</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="snipContent">Your Answer / Text *</label>
+                <textarea id="snipContent" name="content" rows="6" required placeholder="Type your polished response here..."></textarea>
+              </div>
+              <div class="modal-footer">
+                <button type="button" id="cancelSnippetBtn" class="btn btn-secondary">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Snippet</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. APPLICATION TRACKER TAB -->
+      <section id="tab-tracker" class="tab-pane">
+        <div class="pane-header">
+          <div class="tracker-filters">
+            <select id="statusFilter" class="select-filter">
+              <option value="ALL">All Statuses</option>
+              <option value="Applied">Applied</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Waitlisted">Waitlisted</option>
+              <option value="Rejected">Rejected</option>
+            </select>
+          </div>
+          <button id="addAppBtn" class="btn btn-secondary btn-sm">+ Log Event</button>
+        </div>
+
+        <div id="trackerList" class="tracker-cards">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- Tracker Modal -->
+        <div id="trackerModal" class="modal-overlay hidden">
+          <div class="modal-card">
+            <div class="modal-header">
+              <h3 id="trackerModalTitle">Log Hackathon Application</h3>
+              <button id="closeTrackerModal" class="btn-close">&times;</button>
+            </div>
+            <form id="trackerForm">
+              <input type="hidden" id="appId" name="id">
+              <div class="form-group">
+                <label for="appEventName">Event / Hackathon Name *</label>
+                <input type="text" id="appEventName" name="eventName" required placeholder="e.g. HackMIT 2026">
+              </div>
+              <div class="form-group">
+                <label for="appEventUrl">Event URL</label>
+                <input type="url" id="appEventUrl" name="eventUrl" placeholder="https://hackmit.org">
+              </div>
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="appDate">Applied Date</label>
+                  <input type="date" id="appDate" name="appliedDate">
+                </div>
+                <div class="form-group">
+                  <label for="appStatus">Status</label>
+                  <select id="appStatus" name="status">
+                    <option value="Applied">Applied</option>
+                    <option value="Accepted">Accepted</option>
+                    <option value="Waitlisted">Waitlisted</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="appSquad">Squad / Teammates</label>
+                <input type="text" id="appSquad" name="squad" placeholder="e.g. Solo, or Alex, Sam, Taylor">
+              </div>
+              <div class="form-group">
+                <label for="appNotes">Notes / Submission Link</label>
+                <textarea id="appNotes" name="notes" rows="3" placeholder="Confirmation email received, team code: #XYZ"></textarea>
+              </div>
+              <div class="modal-footer">
+                <button type="button" id="cancelTrackerBtn" class="btn btn-secondary">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Entry</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. SETTINGS & BACKUP TAB -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="form-section">
+          <h3 class="section-title">Data Backup & Restore</h3>
+          <p class="section-desc">Keep your profiles and teammate records secure or move them between machines.</p>
+          <div class="settings-actions">
+            <button id="exportDataBtn" class="btn btn-secondary btn-block">
+              📥 Export All Data (JSON)
+            </button>
+            <label class="btn btn-secondary btn-block file-label">
+              📤 Import Data from JSON
+              <input type="file" id="importDataInput" accept=".json" class="hidden">
+            </label>
+          </div>
+        </div>
+
+        <div class="form-section">
+          <h3 class="section-title">Demo & Testing</h3>
+          <p class="section-desc">Load sample profile, teammates, and pitch snippets to try out the extension immediately.</p>
+          <button id="loadDemoBtn" class="btn btn-accent btn-block">
+            ✨ Load Hackathon Demo Data
+          </button>
+        </div>
+
+        <div class="form-section">
+          <h3 class="section-title">Keyboard Shortcuts</h3>
+          <div class="shortcut-box">
+            <div class="shortcut-item">
+              <span class="shortcut-desc">Instant AutoFill Page</span>
+              <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-section danger-zone">
+          <h3 class="section-title text-danger">Reset</h3>
+          <button id="clearDataBtn" class="btn btn-danger btn-block">
+            🗑️ Clear All Saved Data
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
