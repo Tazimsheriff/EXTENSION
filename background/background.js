@@ -1,252 +1,288 @@
 /**
- * HackFill - Background Service Worker (Manifest V3)
- * Cross-browser compatible: Chrome + Firefox
+ * HackFill background worker. Chrome and Firefox MV3.
+ * Menus are rebuilt on install and on browser startup because a service worker does not stay alive.
  */
 
-// ── Browser API shim ──────────────────────────────────────────────────────────
-// Firefox exposes `browser.*` (Promise-based); Chrome exposes `chrome.*` (callback-based).
-// We normalise to a single `ext` object so the rest of this file works on both.
 const ext = (typeof browser !== 'undefined') ? browser : chrome;
 
-// Initial default data if storage is empty
-const DEFAULT_DEMO_DATA = {
-  profile: {
-    fullName: "Alex Rivera",
-    email: "alex.rivera@cs.edu",
-    phone: "+1 (415) 890-3412",
-    location: "San Francisco, CA",
-    github: "https://github.com/alexrivera-dev",
-    linkedin: "https://linkedin.com/in/alex-rivera-tech",
-    portfolio: "https://alexrivera.dev",
-    resume: "https://drive.google.com/file/d/1demo-alex-rivera-resume/view",
-    discord: "arivera#4092",
-    devfolio: "https://devfolio.co/@alexrivera",
-    college: "UC Berkeley",
-    degree: "B.S. Computer Science",
-    gradYear: "2026",
-    secId: "21CS104",
-    customVariables: [
-      { id: "cv_demo_1", name: "SEC ID", value: "21CS104" },
-      { id: "cv_demo_2", name: "HackerRank ID", value: "alex_hack26" },
-      { id: "cv_demo_3", name: "Telegram", value: "@alexrivera_dev" }
-    ],
-    tshirt: "L",
-    diet: "Vegetarian",
-    emergency: "Maria Rivera (+1 415-555-0199)"
-  },
-  teammates: [
-    {
-      id: "tm_demo_1",
-      name: "Sophia Chen",
-      email: "sophia.chen@mit.edu",
-      phone: "+1 (617) 555-0144",
-      college: "MIT",
-      secId: "21CS205",
-      github: "https://github.com/sophiachen-ai",
-      linkedin: "https://linkedin.com/in/sophiachen-ai",
-      resume: "https://drive.google.com/file/d/1demo-sophia-resume/view",
-      discord: "sophia#1337",
-      tshirt: "M",
-      diet: "None",
-      squadPos: 1
-    },
-    {
-      id: "tm_demo_2",
-      name: "Marcus Vance",
-      email: "marcus.vance@stanford.edu",
-      phone: "+1 (650) 555-0182",
-      college: "Stanford University",
-      secId: "21CS208",
-      github: "https://github.com/marcusvance",
-      linkedin: "https://linkedin.com/in/marcus-vance",
-      resume: "https://drive.google.com/file/d/1demo-marcus-resume/view",
-      discord: "mvance#9811",
-      tshirt: "XL",
-      diet: "Halal",
-      squadPos: 2
+function loadPacked(path) {
+  try {
+    if (typeof importScripts === 'function') {
+      importScripts(ext.runtime.getURL(path));
+      return Promise.resolve();
     }
-  ],
-  snippets: [
-    {
-      id: "snip_demo_1",
-      title: "Tell us about a project you are proud of",
-      category: "Pitch",
-      content: "Built an edge-AI audio transcription system using WebAssembly and ONNX Runtime in the browser. It processes 60 FPS streaming audio completely offline with zero latency, winning 1st place in the accessibility track."
-    },
-    {
-      id: "snip_demo_2",
-      title: "Why do you want to participate in this hackathon?",
-      category: "Motivation",
-      content: "I thrive in fast-paced 36-hour hackathons where interdisciplinary builders converge. My team wants to push the boundaries of browser-based agent workflows and ship a functional product that solves real pain points."
-    }
-  ],
-  tracker: [
-    {
-      id: "app_demo_1",
-      eventName: "TreeHacks 2026",
-      eventUrl: "https://treehacks.com",
-      appliedDate: "2026-01-15",
-      status: "Accepted",
-      squad: "Sophia Chen, Marcus Vance",
-      notes: "Selected for AI track! Team code #TH26-88"
-    }
-  ]
-};
+  } catch (err) { /* event pages load with a script tag */ }
+  if (typeof document === 'undefined') return Promise.resolve();
+  return new Promise((resolve) => {
+    const script = document.createElement('script');
+    script.src = ext.runtime.getURL(path);
+    script.onload = () => resolve();
+    script.onerror = () => resolve();
+    (document.head || document.documentElement).appendChild(script);
+  });
+}
 
-// Extension installed or updated
-ext.runtime.onInstalled.addListener(async (details) => {
-  // ONLY seed initial demo data if the extension was just freshly installed AND storage is completely empty
-  // On extension reloads (details.reason === 'update'), storage is 100% untouched!
-  if (details.reason === 'install') {
-    const current = await ext.storage.local.get(['profile', 'hasInitialized']);
-    if (!current.hasInitialized && (!current.profile || Object.keys(current.profile).length === 0)) {
-      await ext.storage.local.set({
-        ...DEFAULT_DEMO_DATA,
-        hasInitialized: true
-      });
-    }
+try {
+  // Chrome runs this file as a worker. Firefox runs it as an event page, which has no importScripts.
+  if (typeof importScripts === 'function') {
+    importScripts(ext.runtime.getURL('lib/jsQR.min.js'));
+    importScripts(ext.runtime.getURL('lib/qrscan.js'));
   }
+} catch (err) {
+  // QR open still works from the page when the image can be drawn locally.
+}
 
-  // Create Context Menus
-  createContextMenus();
-});
+function scanner() {
+  if (typeof hackfillScanQr === 'function') return hackfillScanQr;
+  if (typeof self !== 'undefined' && typeof self.hackfillScanQr === 'function') return self.hackfillScanQr;
+  return null;
+}
 
-// Setup Context Menus
+function ensureQr() {
+  const jobs = [];
+  if (!qrDecoder()) jobs.push(loadPacked('lib/jsQR.min.js'));
+  if (!scanner()) jobs.push(loadPacked('lib/qrscan.js'));
+  return Promise.all(jobs);
+}
+
+function qrDecoder() {
+  if (typeof self !== 'undefined' && typeof self.jsQR === 'function') return self.jsQR;
+  if (typeof jsQR === 'function') return jsQR;
+  return null;
+}
+
+function safeHttpUrl(text) {
+  const raw = String(text || '').trim();
+  const accept = (value) => {
+    try {
+      const url = new URL(value);
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+    } catch (err) { /* not a url */ }
+    return '';
+  };
+  const direct = accept(raw);
+  if (direct) return direct;
+  const match = raw.match(/https?:\/\/[^\s<>"']+/i);
+  if (!match) return '';
+  return accept(match[0].replace(/[),.;]+$/, ''));
+}
+
+function drawingContext(width, height) {
+  if (typeof OffscreenCanvas === 'function') {
+    try {
+      const canvas = new OffscreenCanvas(width, height);
+      const ctx = canvas.getContext('2d');
+      if (ctx) return ctx;
+    } catch (err) { /* Firefox event pages can draw on a normal canvas */ }
+  }
+  if (typeof document === 'undefined') return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas.getContext('2d');
+}
+
+async function decodeQrFromUrl(url) {
+  await ensureQr();
+  const qr = qrDecoder();
+  if (!qr || !url || !/^https?:/i.test(url)) return '';
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return '';
+    const blob = await response.blob();
+    if (!blob.size || blob.size > 12 * 1024 * 1024) return '';
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = drawingContext(width, height);
+    if (!ctx) return '';
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    if (bitmap.close) bitmap.close();
+    const image = ctx.getImageData(0, 0, width, height);
+    const scan = scanner();
+    if (scan) return scan(qr, image.data, image.width, image.height);
+    const code = qr(image.data, image.width, image.height, { inversionAttempts: 'attemptBoth' });
+    return code && code.data ? String(code.data) : '';
+  } catch (err) {
+    return '';
+  }
+}
+
+let menuJob = Promise.resolve();
+
+function createMenu(item) {
+  return Promise.resolve()
+    .then(() => ext.contextMenus.create(item))
+    .catch(() => {});
+}
+
+function whenMenusCleared() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    try {
+      const cleared = ext.contextMenus.removeAll(finish);
+      if (cleared && typeof cleared.then === 'function') cleared.then(finish, finish);
+    } catch (err) {
+      finish();
+    }
+  });
+}
+
 function createContextMenus() {
-  ext.contextMenus.removeAll(() => {
-    // Parent Menu
-    ext.contextMenus.create({
+  menuJob = menuJob.then(async () => {
+    await whenMenusCleared();
+    await createMenu({
       id: 'hackfill_root',
-      title: '⚡ HackFill Quick Paste',
+      title: 'HackFill',
       contexts: ['editable', 'page']
     });
-
-    ext.contextMenus.create({
+    await createMenu({
       parentId: 'hackfill_root',
       id: 'hackfill_autofill_page',
-      title: '⚡ Autofill Entire Page',
+      title: 'Fill this page',
       contexts: ['editable', 'page']
     });
-
-    ext.contextMenus.create({
+    await createMenu({
       parentId: 'hackfill_root',
       id: 'hackfill_sep1',
       type: 'separator',
       contexts: ['editable']
     });
-
-    ext.contextMenus.create({
-      parentId: 'hackfill_root',
-      id: 'hackfill_my_secid',
-      title: '🆔 Insert SEC ID / College ID',
-      contexts: ['editable']
+    const items = [
+      ['hackfill_my_secid', 'Insert college / roll ID'],
+      ['hackfill_my_github', 'Insert GitHub'],
+      ['hackfill_my_linkedin', 'Insert LinkedIn'],
+      ['hackfill_my_resume', 'Insert resume link'],
+      ['hackfill_my_portfolio', 'Insert portfolio'],
+      ['hackfill_my_email', 'Insert email']
+    ];
+    for (const [id, title] of items) {
+      await createMenu({
+        parentId: 'hackfill_root',
+        id,
+        title,
+        contexts: ['editable']
+      });
+    }
+    await createMenu({
+      id: 'hackfill_scan_qr',
+      title: 'Open link in this QR',
+      contexts: ['image']
     });
-
-    ext.contextMenus.create({
-      parentId: 'hackfill_root',
-      id: 'hackfill_my_github',
-      title: '🐙 Insert My GitHub',
-      contexts: ['editable']
-    });
-
-    ext.contextMenus.create({
-      parentId: 'hackfill_root',
-      id: 'hackfill_my_linkedin',
-      title: '💼 Insert My LinkedIn',
-      contexts: ['editable']
-    });
-
-    ext.contextMenus.create({
-      parentId: 'hackfill_root',
-      id: 'hackfill_my_resume',
-      title: '📄 Insert My Resume Link',
-      contexts: ['editable']
-    });
-
-    ext.contextMenus.create({
-      parentId: 'hackfill_root',
-      id: 'hackfill_my_portfolio',
-      title: '🌐 Insert My Portfolio',
-      contexts: ['editable']
-    });
-
-    ext.contextMenus.create({
-      parentId: 'hackfill_root',
-      id: 'hackfill_my_email',
-      title: '✉️ Insert My Email',
-      contexts: ['editable']
-    });
-  });
+  }).catch(() => {});
+  return menuJob;
 }
 
-// Handle Context Menu clicks
-ext.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (!tab || !tab.id) return;
-
-  const data = await ext.storage.local.get(['profile', 'teammates']);
-  const profile = data.profile || {};
-
-  if (info.menuItemId === 'hackfill_autofill_page') {
-    ext.tabs.sendMessage(tab.id, {
-      action: 'AUTOFILL_PAGE',
-      payload: { profile, teammates: data.teammates || [] }
-    });
-    return;
-  }
-
-  let textToInsert = '';
-  switch (info.menuItemId) {
-    case 'hackfill_my_secid':
-      textToInsert = profile.secId || '';
-      break;
-    case 'hackfill_my_github':
-      textToInsert = profile.github || '';
-      break;
-    case 'hackfill_my_linkedin':
-      textToInsert = profile.linkedin || '';
-      break;
-    case 'hackfill_my_resume':
-      textToInsert = profile.resume || '';
-      break;
-    case 'hackfill_my_portfolio':
-      textToInsert = profile.portfolio || '';
-      break;
-    case 'hackfill_my_email':
-      textToInsert = profile.email || '';
-      break;
-  }
-
-  if (textToInsert) {
-    ext.tabs.sendMessage(tab.id, {
-      action: 'INSERT_SNIPPET',
-      text: textToInsert
-    });
-  }
-});
-
-// Handle Keyboard Shortcuts (e.g. Alt+Shift+F)
-ext.commands.onCommand.addListener(async (command) => {
-  if (command === 'autofill_form') {
-    const tabs = await ext.tabs.query({ active: true, currentWindow: true });
-    const tab = tabs[0];
-    if (tab && tab.id) {
-      const data = await ext.storage.local.get(['profile', 'teammates']);
-      ext.tabs.sendMessage(tab.id, {
-        action: 'AUTOFILL_PAGE',
-        payload: {
-          profile: data.profile || {},
-          teammates: data.teammates || []
-        }
+ext.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'install') {
+    const current = await ext.storage.local.get(['hasInitialized', 'profile']);
+    if (!current.hasInitialized) {
+      await ext.storage.local.set({
+        profile: current.profile || {},
+        teammates: [],
+        snippets: [],
+        tracker: [],
+        team: { size: 1, slots: [] },
+        hasInitialized: true
       });
     }
   }
+  await createContextMenus();
 });
 
-// Handle requests from content scripts (e.g. open full dashboard / settings)
+ext.runtime.onStartup.addListener(() => createContextMenus());
+createContextMenus();
+
+async function fillPayload() {
+  const data = await ext.storage.local.get(['profile', 'teammates', 'team', 'snippets']);
+  return {
+    profile: data.profile || {},
+    teammates: data.teammates || [],
+    team: data.team || null,
+    snippets: data.snippets || []
+  };
+}
+
+async function openQrFromImage(info, tab) {
+  const src = info.srcUrl || '';
+  let text = '';
+  try {
+    if (src.startsWith('blob:') || src.startsWith('data:')) {
+      const res = await ext.tabs.sendMessage(tab.id, { action: 'DECODE_QR_SRC', url: src });
+      text = res && res.text ? res.text : '';
+    } else {
+      text = await decodeQrFromUrl(src);
+    }
+  } catch (err) {
+    text = '';
+  }
+  const href = safeHttpUrl(text);
+  if (href) {
+    ext.tabs.create({ url: href });
+    return;
+  }
+  try {
+    await ext.tabs.sendMessage(tab.id, { action: 'QR_NOTICE', text: text || '' });
+  } catch (err) { /* page cannot show a notice */ }
+}
+
+ext.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (!tab || !tab.id) return;
+  if (info.menuItemId === 'hackfill_scan_qr') {
+    await openQrFromImage(info, tab);
+    return;
+  }
+  const payload = await fillPayload();
+  if (info.menuItemId === 'hackfill_autofill_page') {
+    ext.tabs.sendMessage(tab.id, { action: 'AUTOFILL_PAGE', payload });
+    return;
+  }
+  const profile = payload.profile;
+  const map = {
+    hackfill_my_secid: profile.secId,
+    hackfill_my_github: profile.github,
+    hackfill_my_linkedin: profile.linkedin,
+    hackfill_my_resume: profile.resume,
+    hackfill_my_portfolio: profile.portfolio,
+    hackfill_my_email: profile.email
+  };
+  const text = map[info.menuItemId] || '';
+  if (text) ext.tabs.sendMessage(tab.id, { action: 'INSERT_SNIPPET', text });
+});
+
+ext.commands.onCommand.addListener(async (command) => {
+  if (command !== 'autofill_form') return;
+  const tabs = await ext.tabs.query({ active: true, currentWindow: true });
+  const tab = tabs && tabs[0];
+  if (!tab || !tab.id) return;
+  const payload = await fillPayload();
+  ext.tabs.sendMessage(tab.id, { action: 'AUTOFILL_PAGE', payload });
+});
+
 ext.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'OPEN_SETTINGS') {
-    ext.tabs.create({ url: ext.runtime.getURL('popup/popup.html') });
-    sendResponse({ success: true });
+  if (request.action === 'DECODE_QR') {
+    decodeQrFromUrl(request.url).then((text) => sendResponse({ text: text || '' }));
     return true;
   }
+  if (request.action === 'OPEN_LINK') {
+    const href = safeHttpUrl(request.url);
+    if (href) ext.tabs.create({ url: href });
+    sendResponse({ ok: Boolean(href) });
+    return true;
+  }
+  if (request.action !== 'OPEN_SETTINGS') return undefined;
+  ext.windows.create({
+    url: ext.runtime.getURL('popup/popup.html?standalone=true'),
+    type: 'popup',
+    width: 480,
+    height: 760
+  });
+  sendResponse({ success: true });
+  return true;
 });

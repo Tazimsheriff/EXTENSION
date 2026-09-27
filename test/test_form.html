@@ -3,285 +3,116 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Global AI Hackathon 2026 - Registration Portal (Test Form)</title>
+  <title>Northstar Hack 2026 | Registration</title>
   <link rel="stylesheet" href="../content/content.css">
   <style>
-    :root {
-      --bg: #090d16;
-      --card: #131926;
-      --border: #222d42;
-      --accent: #6366f1;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      background-color: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      padding: 40px 20px;
-      display: flex;
-      justify-content: center;
-    }
-    .container {
-      max-width: 720px;
-      width: 100%;
-    }
-    .header {
-      text-align: center;
-      margin-bottom: 32px;
-    }
-    .header h1 {
-      font-size: 28px;
-      margin-bottom: 8px;
-      background: linear-gradient(135deg, #a855f7, #6366f1);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-    .header p {
-      color: var(--muted);
-      font-size: 14px;
-    }
-    .form-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 24px;
-      margin-bottom: 24px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-    }
-    .form-card h2 {
-      font-size: 18px;
-      margin-bottom: 16px;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--border);
-      color: #e2e8f0;
-    }
-    .grid-2 {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 14px;
-    }
-    label {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--muted);
-    }
-    input, select, textarea {
-      background: #1a2235;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px 12px;
-      color: #fff;
-      font-size: 14px;
-      transition: all 0.2s ease;
-    }
-    input:focus, select:focus, textarea:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.25);
-    }
-    .btn-submit {
-      background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
-      color: white;
-      border: none;
-      border-radius: 8px;
-      padding: 12px 24px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      width: 100%;
-      box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
-    }
-    .banner {
-      background: rgba(99, 102, 241, 0.12);
-      border: 1px solid rgba(99, 102, 241, 0.3);
-      border-radius: 8px;
-      padding: 12px 16px;
-      margin-bottom: 24px;
-      font-size: 13px;
-      color: #c7d2fe;
-      line-height: 1.5;
-    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Georgia, "Times New Roman", serif; background: #f4f0e8; color: #1c1915; }
+    main { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+    h1 { font-weight: 500; font-size: 40px; margin: 0 0 8px; }
+    .lede { color: #5c564c; margin-bottom: 28px; }
+    form { display: flex; flex-direction: column; gap: 18px; }
+    section { background: white; border: 1px solid #e2d9cc; padding: 18px 18px 6px; }
+    h2 { font-size: 18px; font-weight: 500; margin: 0 0 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label { display: flex; flex-direction: column; gap: 4px; font-family: "Segoe UI", sans-serif; font-size: 13px; margin-bottom: 12px; }
+    input, select, textarea { font: 15px "Segoe UI", sans-serif; padding: 8px 10px; border: 1px solid #cfc6b8; background: #fffdf9; }
+    textarea { min-height: 90px; }
+    button { font: 16px "Segoe UI", sans-serif; background: #1c1915; color: white; border: 0; padding: 12px 18px; cursor: pointer; }
+    .note { font-family: "Segoe UI", sans-serif; font-size: 13px; background: #fff; border: 1px dashed #cfc6b8; padding: 12px; margin-bottom: 18px; }
+    @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>⚡ Global AI Hackathon 2026</h1>
-      <p>Test form for verifying HackFill auto-detection & team-filling capabilities</p>
-    </div>
-
-    <div class="banner">
-      💡 <strong>How to test:</strong> When the extension is loaded, the floating <strong>⚡ HackFill</strong> buddy appears at the bottom right. Click it and tap <strong>⚡ AutoFill Entire Form</strong> or press <kbd>Alt+Shift+F</kbd>! Watch all personal details, profiles, and teammate fields fill in seconds!
-    </div>
-
-    <form id="hackathonAppForm" onsubmit="event.preventDefault(); alert('Application submitted successfully!');">
-      <!-- Section 1: Primary Applicant -->
-      <div class="form-card">
+  <main>
+    <h1>Northstar Hack 2026</h1>
+    <p class="lede">A plain registration page for checking HackFill. Load the demo lineup, then press Alt+Shift+F.</p>
+    <div class="note">Team name should stay empty. Member 4 should fill the third saved teammate, not you. The essay should fill from Answers.</div>
+    <form onsubmit="event.preventDefault(); alert('Saved locally. Nothing was submitted.');">
+      <section>
         <h2>1. Team Lead / Primary Applicant</h2>
-        <div class="grid-2">
-          <div class="form-group">
-            <label for="fullName">Full Legal Name</label>
-            <input type="text" id="fullName" name="applicant_fullname" placeholder="Ada Lovelace">
-          </div>
-          <div class="form-group">
-            <label for="email">Primary Email Address</label>
-            <input type="email" id="email" name="applicant_email" placeholder="ada@domain.com">
-          </div>
-          <div class="form-group">
-            <label for="phone">Phone / Mobile Number</label>
-            <input type="tel" id="phone" name="applicant_phone" placeholder="+1 (555) 000-0000">
-          </div>
-          <div class="form-group">
-            <label for="location">Current City & Country</label>
-            <input type="text" id="location" name="applicant_location" placeholder="City, Country">
-          </div>
-        </div>
-      </div>
-
-      <!-- Section 2: Profiles & Links -->
-      <div class="form-card">
-        <h2>2. Socials & Project Links</h2>
-        <div class="grid-2">
-          <div class="form-group">
-            <label for="github">GitHub Profile URL</label>
-            <input type="url" id="github" name="lead_github_url" placeholder="https://github.com/username">
-          </div>
-          <div class="form-group">
-            <label for="linkedin">LinkedIn Profile URL</label>
-            <input type="url" id="linkedin" name="lead_linkedin_url" placeholder="https://linkedin.com/in/username">
-          </div>
-          <div class="form-group">
-            <label for="portfolio">Portfolio / Personal Website</label>
-            <input type="url" id="portfolio" name="lead_portfolio_website" placeholder="https://mywebsite.dev">
-          </div>
-          <div class="form-group">
-            <label for="resume">Resume Link (Google Drive / DocSend)</label>
-            <input type="url" id="resume" name="lead_resume_link" placeholder="https://drive.google.com/...">
-          </div>
-          <div class="form-group">
-            <label for="discord">Discord Tag</label>
-            <input type="text" id="discord" name="lead_discord_tag" placeholder="username#0000">
-          </div>
-          <div class="form-group">
-            <label for="devfolio">Devfolio / Devpost Profile</label>
-            <input type="url" id="devfolio" name="lead_devfolio_profile" placeholder="https://devfolio.co/@user">
-          </div>
-        </div>
-      </div>
-
-      <!-- Section 3: Academics & Logistics -->
-      <div class="form-card">
-        <h2>3. Academic & Event Logistics</h2>
-        <div class="grid-2">
-          <div class="form-group" style="grid-column: span 2;">
-            <label for="college">College / University Name</label>
-            <input type="text" id="college" name="lead_college_name" placeholder="University of ...">
-          </div>
-          <div class="form-group">
-            <label for="degree">Degree / Major</label>
-            <input type="text" id="degree" name="lead_degree_major" placeholder="B.S. Computer Science">
-          </div>
-          <div class="form-group">
-            <label for="gradYear">Expected Graduation Year</label>
-            <input type="text" id="gradYear" name="lead_grad_year" placeholder="2026">
-          </div>
-          <div class="form-group">
-            <label for="secId">College Roll No / SEC ID</label>
-            <input type="text" id="secId" name="lead_sec_id" placeholder="e.g. 21CS104">
-          </div>
-          <div class="form-group">
-            <label for="hackerRank">HackerRank ID (Custom Variable)</label>
-            <input type="text" id="hackerRank" name="hackerrank_id" placeholder="e.g. username_hack">
-          </div>
-          <div class="form-group">
-            <label for="tshirt">T-Shirt Size</label>
-            <select id="tshirt" name="lead_tshirt_size">
+        <div class="grid">
+          <label>Full Legal Name <input name="applicant_fullname" placeholder="Ada Lovelace"></label>
+          <label>Primary Email Address <input type="email" name="applicant_email"></label>
+          <label>Phone / Mobile Number <input type="tel" name="applicant_phone"></label>
+          <label>Current City & Country <input name="applicant_location"></label>
+          <label>GitHub Profile URL <input type="url" name="lead_github_url"></label>
+          <label>LinkedIn Profile URL <input type="url" name="lead_linkedin_url"></label>
+          <label>Portfolio / Personal Website <input type="url" name="lead_portfolio_website"></label>
+          <label>Resume Link <input type="url" name="lead_resume_link"></label>
+          <label>Discord Tag <input name="lead_discord_tag"></label>
+          <label>Devfolio / Devpost Profile <input type="url" name="lead_devfolio_profile"></label>
+          <label>College / University Name <input name="lead_college_name"></label>
+          <label>Degree / Major <input name="lead_degree_major"></label>
+          <label>Expected Graduation Year <input name="lead_grad_year"></label>
+          <label>College Roll No / SEC ID <input name="lead_sec_id"></label>
+          <label>HackerRank ID <input name="hackerrank_id"></label>
+          <label>T-Shirt Size
+            <select name="lead_tshirt_size">
               <option value="">Select size</option>
               <option value="S">Small (S)</option>
               <option value="M">Medium (M)</option>
               <option value="L">Large (L)</option>
               <option value="XL">Extra Large (XL)</option>
             </select>
-          </div>
-          <div class="form-group">
-            <label for="diet">Dietary Restrictions</label>
-            <select id="diet" name="lead_dietary_pref">
+          </label>
+          <label>Dietary Restrictions
+            <select name="lead_dietary_pref">
               <option value="None">None</option>
               <option value="Vegetarian">Vegetarian</option>
               <option value="Vegan">Vegan</option>
               <option value="Halal">Halal</option>
             </select>
-          </div>
+          </label>
         </div>
-      </div>
+      </section>
 
-      <!-- Section 4: Teammate 1 (Squad Member 1) -->
-      <div class="form-card">
+      <section>
+        <h2>Team name</h2>
+        <label>Team Name <input name="team_name" placeholder="Should stay blank"></label>
+      </section>
+
+      <section>
         <h2>4. Teammate 1 Details</h2>
-        <div class="grid-2">
-          <div class="form-group">
-            <label for="tm1_name">Teammate 1 Name</label>
-            <input type="text" id="tm1_name" name="teammate_1_name" placeholder="Teammate 1 Full Name">
-          </div>
-          <div class="form-group">
-            <label for="tm1_email">Teammate 1 Email</label>
-            <input type="email" id="tm1_email" name="teammate_1_email" placeholder="teammate1@domain.com">
-          </div>
-          <div class="form-group">
-            <label for="tm1_secId">Teammate 1 SEC ID</label>
-            <input type="text" id="tm1_secId" name="teammate_1_sec_id" placeholder="e.g. 21CS205">
-          </div>
-          <div class="form-group">
-            <label for="tm1_github">Teammate 1 GitHub</label>
-            <input type="url" id="tm1_github" name="teammate_1_github" placeholder="https://github.com/teammate1">
-          </div>
-          <div class="form-group">
-            <label for="tm1_linkedin">Teammate 1 LinkedIn</label>
-            <input type="url" id="tm1_linkedin" name="teammate_1_linkedin" placeholder="https://linkedin.com/in/teammate1">
-          </div>
+        <div class="grid">
+          <label>Teammate 1 Name <input name="teammate_1_name"></label>
+          <label>Teammate 1 Email <input type="email" name="teammate_1_email"></label>
+          <label>Teammate 1 SEC ID <input name="teammate_1_sec_id"></label>
+          <label>Teammate 1 GitHub <input type="url" name="teammate_1_github"></label>
+          <label>Teammate 1 LinkedIn <input type="url" name="teammate_1_linkedin"></label>
+          <label>Teammate 1 HackerRank ID <input name="teammate_1_hackerrank"></label>
         </div>
-      </div>
+      </section>
 
-      <!-- Section 5: Teammate 2 (Squad Member 2) -->
-      <div class="form-card">
+      <section>
         <h2>5. Teammate 2 Details</h2>
-        <div class="grid-2">
-          <div class="form-group">
-            <label for="tm2_name">Teammate 2 Name</label>
-            <input type="text" id="tm2_name" name="teammate_2_name" placeholder="Teammate 2 Full Name">
-          </div>
-          <div class="form-group">
-            <label for="tm2_email">Teammate 2 Email</label>
-            <input type="email" id="tm2_email" name="teammate_2_email" placeholder="teammate2@domain.com">
-          </div>
-          <div class="form-group">
-            <label for="tm2_secId">Teammate 2 SEC ID</label>
-            <input type="text" id="tm2_secId" name="teammate_2_sec_id" placeholder="e.g. 21CS208">
-          </div>
-          <div class="form-group">
-            <label for="tm2_github">Teammate 2 GitHub</label>
-            <input type="url" id="tm2_github" name="teammate_2_github" placeholder="https://github.com/teammate2">
-          </div>
-          <div class="form-group">
-            <label for="tm2_resume">Teammate 2 Resume Link</label>
-            <input type="url" id="tm2_resume" name="teammate_2_resume" placeholder="https://drive.google.com/...">
-          </div>
+        <div class="grid">
+          <label>Name <input name="teammate_2_name"></label>
+          <label>Email <input type="email" name="teammate_2_email"></label>
+          <label>GitHub <input type="url" name="teammate_2_github"></label>
+          <label>Resume Link <input type="url" name="teammate_2_resume"></label>
         </div>
-      </div>
+      </section>
 
-      <button type="submit" class="btn-submit">Submit Hackathon Application</button>
+      <section>
+        <h2>Member 4</h2>
+        <div class="grid">
+          <label>Full Name <input name="m4_full_name"></label>
+          <label>Email <input type="email" name="m4_email"></label>
+          <label>College <input name="m4_college"></label>
+          <label>GitHub <input type="url" name="m4_github"></label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Essay</h2>
+        <label>Why do you want to participate in this hackathon?
+          <textarea name="motivation"></textarea>
+        </label>
+      </section>
+
+      <button type="submit">Submit application</button>
     </form>
-  </div>
-
-  <!-- Optional direct script for standalone testing without extension context -->
-  <script src="../content/content.js"></script>
+  </main>
 </body>
 </html>

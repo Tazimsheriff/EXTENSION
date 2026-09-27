@@ -1,340 +1,509 @@
 /**
- * HackFill - Content Script
- * Intelligent Form Analyzer, AutoFill Engine, Teammate Mapper & Floating Buddy
+ * HackFill content script.
+ * You are roster[0]. Participant N and Teammate N are roster[N].
+ * Member N and Operative N are roster[N - 1], so Operative 02 is the first teammate.
  */
-
 (() => {
-  // Prevent duplicate injection
   if (window.__HACKFILL_INJECTED__) return;
   window.__HACKFILL_INJECTED__ = true;
 
-  // ── Browser API shim ──────────────────────────────────────────────────────
-  // Firefox exposes `browser`; Chrome exposes `chrome`. Normalise to `ext`.
-  const ext = (typeof browser !== 'undefined') ? browser : chrome;
-
-  let cachedData = {
-    profile: {},
-    teammates: [],
-    snippets: []
-  };
-
-  // Load user data from extension Storage
-  async function loadUserData() {
-    if (typeof ext !== 'undefined' && ext.storage && ext.storage.local) {
-      try {
-        const res = await ext.storage.local.get(['profile', 'teammates', 'snippets']);
-        cachedData.profile = res.profile || {};
-        cachedData.teammates = res.teammates || [];
-        cachedData.snippets = res.snippets || [];
-      } catch (e) {
-        console.warn('[HackFill] Error loading storage:', e);
+  const ext = (typeof browser !== 'undefined') ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+  const SCRIPT_BASE = (() => {
+    try {
+      if (document.currentScript && document.currentScript.src) {
+        return document.currentScript.src.replace(/[^/]+$/, '');
       }
-    }
-  }
+    } catch (err) { /* extension injection has no currentScript */ }
+    return '';
+  })();
 
-  // Find all form fields on page
-  function getFormElements() {
-    return Array.from(document.querySelectorAll(
-      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select'
-    )).filter(el => {
-      // Must be somewhat visible
-      const style = window.getComputedStyle(el);
-      return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+  if (location.protocol === 'chrome-extension:' || location.protocol === 'moz-extension:') return;
+
+  const cached = { profile: {}, teammates: [], snippets: [], team: null };
+
+  function storageGet(keys) {
+    return new Promise((resolve) => {
+      if (!ext || !ext.storage || !ext.storage.local) { resolve({}); return; }
+      const ret = ext.storage.local.get(keys, (res) => resolve(res || {}));
+      if (ret && typeof ret.then === 'function') ret.then((res) => resolve(res || {}), () => resolve({}));
     });
   }
 
-  // Extract all surrounding context for an element
-  function getFieldContext(el) {
-    const parts = [];
+  function storageSet(data) {
+    return new Promise((resolve) => {
+      if (!ext || !ext.storage || !ext.storage.local) { resolve(); return; }
+      const ret = ext.storage.local.set(data, () => resolve());
+      if (ret && typeof ret.then === 'function') ret.then(() => resolve(), () => resolve());
+    });
+  }
 
-    if (el.id) parts.push(el.id);
-    if (el.name) parts.push(el.name);
-    if (el.placeholder) parts.push(el.placeholder);
-    if (el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label'));
-    if (el.getAttribute('aria-labelledby')) {
-      const labelEl = document.getElementById(el.getAttribute('aria-labelledby'));
-      if (labelEl) parts.push(labelEl.innerText);
-    }
-    if (el.getAttribute('autocomplete')) parts.push(el.getAttribute('autocomplete'));
+  async function loadUserData() {
+    const res = await storageGet(['profile', 'teammates', 'snippets', 'team']);
+    cached.profile = res.profile || {};
+    cached.teammates = res.teammates || [];
+    cached.snippets = res.snippets || [];
+    cached.team = res.team || null;
+  }
 
-    // Associated label
-    if (el.id) {
-      const label = document.querySelector(`label[for="${el.id}"]`);
-      if (label) parts.push(label.innerText);
-    }
-    const parentLabel = el.closest('label');
-    if (parentLabel) parts.push(parentLabel.innerText);
+  function norm(value) {
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
 
-    // Closest form group, question block, or container
-    const container = el.closest(
-      '.form-group, .form-row, .field, .input-group, [role="listitem"], .Qr7Oae, [data-field], .js-form-item'
-    );
-    if (container) {
-      // Grab text inside container excluding the input's current value
-      const heading = container.querySelector('label, h1, h2, h3, h4, [role="heading"], .title, .label');
-      if (heading) {
-        parts.push(heading.innerText);
-      } else {
-        parts.push(container.innerText);
+  function deriveTeam(teammates, team) {
+    const list = teammates || [];
+    const ids = new Set(list.map((t) => t.id));
+    let slots = [];
+    if (team && Array.isArray(team.slots)) {
+      const size = Math.max(1, Math.min(6, Number(team.size) || team.slots.length + 1));
+      for (let i = 0; i < size - 1; i++) {
+        const id = team.slots[i];
+        slots.push(id && ids.has(id) ? id : null);
       }
     } else {
-      // Fallback: Check previous sibling element
-      let prev = el.previousElementSibling;
-      let depth = 0;
-      while (prev && depth < 2) {
-        parts.push(prev.innerText || '');
-        prev = prev.previousElementSibling;
-        depth++;
-      }
+      const sparse = [];
+      list.forEach((t) => {
+        const pos = Number(t.squadPos);
+        if (pos >= 1 && pos <= 5) sparse[pos - 1] = t.id;
+      });
+      for (let i = 0; i < sparse.length; i++) slots.push(sparse[i] || null);
     }
-
-    return parts.join(' ').toLowerCase().replace(/\s+/g, ' ').trim();
+    // Saved people with nobody placed in the lineup still fill Participant 1, Operative 02, and so on.
+    if (!slots.some(Boolean) && list.length) {
+      slots = list.slice(0, 5).map((t) => t.id);
+    }
+    return { size: Math.max(1, slots.length + 1), slots };
   }
 
-  // Check if context text targets a specific teammate (e.g. Teammate 2, Member 3, etc.)
-  function detectTeammateIndex(context) {
-    // Check for "Teammate 2", "Member 3", "Participant 2", etc.
-    const m1 = context.match(/(?:team\s*mate|member|participant|partner|hacker|person|friend)\s*#?\s*([1-4])/i);
-    if (m1) return parseInt(m1[1], 10);
+  function asPerson(entity, isProfile) {
+    if (!entity) return null;
+    const name = isProfile ? (entity.fullName || '') : (entity.name || entity.fullName || '');
+    return {
+      fullName: name,
+      name,
+      email: entity.email || '',
+      phone: entity.phone || '',
+      location: entity.location || '',
+      github: entity.github || '',
+      linkedin: entity.linkedin || '',
+      portfolio: entity.portfolio || '',
+      resume: entity.resume || '',
+      discord: entity.discord || '',
+      devfolio: entity.devfolio || '',
+      college: entity.college || '',
+      degree: entity.degree || '',
+      gradYear: entity.gradYear || '',
+      secId: entity.secId || '',
+      tshirt: entity.tshirt || '',
+      diet: entity.diet || '',
+      emergency: entity.emergency || '',
+      customVariables: Array.isArray(entity.customVariables) ? entity.customVariables : []
+    };
+  }
 
-    if (/(?:2nd|second)\s*(?:team\s*mate|member|participant|partner)/i.test(context)) return 2;
-    if (/(?:3rd|third)\s*(?:team\s*mate|member|participant|partner)/i.test(context)) return 3;
-    if (/(?:4th|fourth)\s*(?:team\s*mate|member|participant|partner)/i.test(context)) return 4;
-    if (/(?:1st|first)\s*(?:team\s*mate|member|participant|partner)/i.test(context)) return 1;
+  function buildRoster(profile, teammates, team) {
+    const lineup = deriveTeam(teammates, team);
+    const byId = new Map((teammates || []).map((t) => [t.id, t]));
+    const people = [asPerson(profile, true)];
+    lineup.slots.forEach((id) => {
+      people.push(id && byId.get(id) ? asPerson(byId.get(id), false) : null);
+    });
+    return people;
+  }
 
+  function parseRole(raw) {
+    const text = norm(raw);
+    if (!text) return null;
+    // "Participant name 1" / "Participant mail 1" is the first person under you, not you.
+    let match = text.match(/\b(?:participants?|teammates?|team\s*mates?|partners?)\b(?:\s+[a-z]+){0,4}\s+0*([1-8])\b/);
+    if (match) return { kind: 'friend', n: Number(match[1]) };
+    // "Squad member 2" and "Operative 02" count the leader as 1.
+    match = text.match(/\b(?:squad\s*)?(?:team\s*)?members?\b(?:\s+[a-z]+){0,4}\s+0*([1-8])\b/);
+    if (match) return { kind: 'member', n: Number(match[1]) };
+    match = text.match(/\boperatives?\s+0*([1-8])\b/);
+    if (match) return { kind: 'member', n: Number(match[1]) };
+    match = text.match(/\b(?:tm|teammate|partner|participant)\s*0*([1-8])\b/);
+    if (match) return { kind: 'friend', n: Number(match[1]) };
+    match = text.match(/\bmember\s*0*([1-8])\b/);
+    if (match) return { kind: 'member', n: Number(match[1]) };
+
+    const ordinals = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, '1st': 1, '2nd': 2, '3rd': 3, '4th': 4, '5th': 5, '6th': 6 };
+    match = text.match(/\b(first|second|third|fourth|fifth|sixth|1st|2nd|3rd|4th|5th|6th)\s+(participant|teammate|partner|member|operative)s?\b/);
+    if (match) {
+      const n = ordinals[match[1]];
+      return /participant|teammate|partner/.test(match[2]) ? { kind: 'friend', n } : { kind: 'member', n };
+    }
+    if (/\bteam\s*lead/.test(text) || /\bprimary\s*contact\b/.test(text) || /\bprimary\s*applicant\b/.test(text) || /\boperative\s+0*1\b/.test(text) || /\byour\s+(details|information|info|profile)\b/.test(text)) {
+      return { kind: 'lead' };
+    }
     return null;
   }
 
-  // Get teammate object for an index (1-based)
-  function getTeammateForIndex(index, teammates) {
-    if (!teammates || teammates.length === 0) return null;
-    // First try explicitly assigned squadPos
-    const squadMember = teammates.find(t => t.squadPos === index);
-    if (squadMember) return squadMember;
-
-    // Fallback: index - 1 in list
-    if (teammates[index - 1]) return teammates[index - 1];
-    return null;
+  function personForRole(role, roster) {
+    if (!role || role.kind === 'lead') return roster[0] || null;
+    if (role.kind === 'friend') return role.n >= 1 && role.n < roster.length ? roster[role.n] : null;
+    if (role.kind === 'member') {
+      const index = role.n - 1;
+      return index >= 0 && index < roster.length ? roster[index] : null;
+    }
+    return roster[0] || null;
   }
 
-  // Smart matching of field to profile/teammate value
-  function matchFieldValue(context, profile, teammate = null) {
-    const target = teammate || profile;
-    if (!target) return null;
-
-    // 1. GitHub
-    if (/github|gh[\s_\-]|github\.com/i.test(context)) {
-      return target.github || null;
-    }
-
-    // 2. LinkedIn
-    if (/linkedin|li[\s_\-]|linkedin\.com/i.test(context)) {
-      return target.linkedin || null;
-    }
-
-    // 3. Resume / CV
-    if (/resume|curriculum|cv\b|google\s*drive.*resume/i.test(context)) {
-      return target.resume || null;
-    }
-
-    // 4. Portfolio / Website
-    if (/portfolio|personal\s*website|website|personal\s*site|web\s*url|homepage/i.test(context)) {
-      return target.portfolio || null;
-    }
-
-    // 5. Discord
-    if (/discord/i.test(context)) {
-      return target.discord || null;
-    }
-
-    // 6. Devpost / Devfolio
-    if (/devpost|devfolio/i.test(context)) {
-      return target.devfolio || null;
-    }
-
-    // 7. Email
-    if (/\bemail\b|e-mail|\bmail\b/i.test(context)) {
-      return target.email || null;
-    }
-
-    // 8. Phone / WhatsApp
-    if (/phone|mobile|cell|whatsapp|contact\s*no|tel\b/i.test(context)) {
-      return target.phone || null;
-    }
-
-    // 9. College / University
-    if (/college|university|school|institution|institute|campus/i.test(context)) {
-      return target.college || null;
-    }
-
-    // 10. Degree / Major
-    if (/degree|major|field\s*of\s*study|course|department/i.test(context)) {
-      return target.degree || null;
-    }
-
-    // 11. Graduation Year
-    if (/grad\w*\s*year|passing\s*year|batch|graduation/i.test(context)) {
-      return target.gradYear || null;
-    }
-
-    // 12. T-Shirt Size
-    if (/t-?shirt|shirt\s*size|swag\s*size/i.test(context)) {
-      return target.tshirt || null;
-    }
-
-    // 13. Dietary Restrictions
-    if (/diet|dietary|food\s*pref|meal/i.test(context)) {
-      return target.diet || null;
-    }
-
-    // 14. Emergency Contact
-    if (/emergency/i.test(context)) {
-      return target.emergency || null;
-    }
-
-    // 15. College / Student ID / SEC ID / Roll No / Registration No
-    if (/sec[\s_\-]*id|college[\s_\-]*id|student[\s_\-]*id|roll[\s_\-]*(?:no|num|number)|registration[\s_\-]*(?:no|num|number|id)|reg[\s_\-]*no|hall[\s_\-]*ticket|admission[\s_\-]*no|campus[\s_\-]*id|university[\s_\-]*id/i.test(context)) {
-      return target.secId || null;
-    }
-
-    // 16. Custom Variables defined by user (dynamic matching)
-    if (target.customVariables && Array.isArray(target.customVariables)) {
-      for (const cv of target.customVariables) {
-        if (cv && cv.name && cv.value) {
-          const varName = cv.name.trim().toLowerCase();
-          if (varName.length >= 2) {
-            const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const regex = new RegExp(`\\b${escaped}\\b|${escaped}`, 'i');
-            if (regex.test(context)) {
-              return cv.value;
-            }
-          }
-        }
-      }
-    }
-
-    // 17. City / Location
-    if (/location|city|residence|country/i.test(context)) {
-      return target.location || null;
-    }
-
-    // 18. Name matching
-    if (/(?:full\s*name|applicant\s*name|your\s*name|legal\s*name|^name$|member\s*name)/i.test(context)) {
-      return target.fullName || target.name || null;
-    }
-    if (/first\s*name|given\s*name/i.test(context)) {
-      const full = target.fullName || target.name || '';
-      return full.split(' ')[0] || null;
-    }
-    if (/last\s*name|surname|family\s*name/i.test(context)) {
-      const full = target.fullName || target.name || '';
-      const parts = full.split(' ');
-      return parts.length > 1 ? parts.slice(1).join(' ') : null;
-    }
-
-    return null;
-  }
-
-  // Safely assign value to an input/textarea/select with event dispatching
-  function fillElement(el, value) {
-    if (!value || el.value === value) return false;
-
-    if (el.tagName === 'SELECT') {
-      let matched = false;
-      const valLower = value.toString().toLowerCase();
-      for (let i = 0; i < el.options.length; i++) {
-        const opt = el.options[i];
-        const optText = opt.text.toLowerCase();
-        const optVal = opt.value.toLowerCase();
-        if (optVal === valLower || optText === valLower || optText.startsWith(valLower)) {
-          el.selectedIndex = i;
-          matched = true;
-          break;
-        }
-      }
-      if (!matched) return false;
-    } else {
-      // Input or textarea
-      // Use prototype setter to bypass React 16+ input masking
-      const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      if (setter) {
-        setter.call(el, value);
-      } else {
-        el.value = value;
-      }
-    }
-
-    // Trigger reactive listeners
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new Event('blur', { bubbles: true }));
-
-    // Highlight flash
-    el.classList.add('hackfill-flash-highlight');
-    setTimeout(() => el.classList.remove('hackfill-flash-highlight'), 1200);
-
+  function visible(el) {
+    if (!el || el.disabled || el.readOnly) return false;
+    if (el.closest && el.closest('#hackfill-host')) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (['hidden', 'submit', 'button', 'reset', 'file', 'password', 'image', 'checkbox', 'radio'].includes(type)) return false;
     return true;
   }
 
-  // Main Autofill Operation
-  async function performAutofill(customProfile = null, customTeammates = null) {
-    await loadUserData();
-    const profile = customProfile || cachedData.profile;
-    const teammates = customTeammates || cachedData.teammates;
-
-    const elements = getFormElements();
-    let filledCount = 0;
-
-    elements.forEach(el => {
-      const context = getFieldContext(el);
-      const tmIndex = detectTeammateIndex(context);
-
-      let matchedVal = null;
-
-      if (tmIndex !== null) {
-        // Form field is specifically for a teammate (e.g. Teammate 2)
-        const tm = getTeammateForIndex(tmIndex, teammates);
-        if (tm) {
-          matchedVal = matchFieldValue(context, null, tm);
-        }
-      } else {
-        // Form field is for primary applicant
-        matchedVal = matchFieldValue(context, profile, null);
+  function getFormElements() {
+    return Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"]')).filter((el) => {
+      if (el.getAttribute && el.getAttribute('contenteditable') === 'true') {
+        if (el === document.body || el === document.documentElement) return false;
+        if (el.closest('#hackfill-host')) return false;
+        if (el.querySelector && el.querySelector('input, textarea, select')) return false;
+        const role = el.getAttribute('role');
+        if (role !== 'textbox' && !el.closest('form')) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden';
       }
+      return visible(el);
+    });
+  }
 
-      if (matchedVal) {
-        const success = fillElement(el, matchedVal);
-        if (success) filledCount++;
+  function cleanLabel(node) {
+    if (!node) return '';
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll('input, textarea, select, script, style').forEach((n) => n.remove());
+    return clone.innerText || clone.textContent || '';
+  }
+
+  function fieldText(el) {
+    const parts = [];
+    ['id', 'name', 'placeholder'].forEach((attr) => {
+      if (el.getAttribute && el.getAttribute(attr)) parts.push(el.getAttribute(attr));
+    });
+    const labelledBy = el.getAttribute && el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      labelledBy.split(/\s+/).forEach((id) => {
+        const node = document.getElementById(id);
+        if (node) parts.push(cleanLabel(node));
+      });
+    }
+    const aria = el.getAttribute && el.getAttribute('aria-label');
+    if (aria) parts.push(aria);
+    const auto = el.getAttribute && el.getAttribute('autocomplete');
+    if (auto) parts.push(auto);
+    if (el.id) {
+      const safe = window.CSS && CSS.escape ? CSS.escape(el.id) : el.id.replace(/"/g, '');
+      const label = document.querySelector(`label[for="${safe}"]`);
+      if (label) parts.push(cleanLabel(label));
+    }
+    const parentLabel = el.closest && el.closest('label');
+    if (parentLabel) parts.push(cleanLabel(parentLabel));
+    return norm(parts.join(' '));
+  }
+
+  function questionTitle(el) {
+    const chunks = [];
+    const listItem = el.closest && el.closest('[role="listitem"]');
+    if (listItem) {
+      listItem.querySelectorAll('[role="heading"], h1, h2, h3, h4').forEach((head) => {
+        if (!head.contains(el)) chunks.push(head.innerText || '');
+      });
+    }
+    let node = el;
+    let depth = 0;
+    while (node && node !== document.body && depth < 8) {
+      let prev = node.previousElementSibling;
+      let hops = 0;
+      while (prev && hops < 5) {
+        const tag = prev.tagName || '';
+        const raw = (prev.innerText || '').trim();
+        const firstLine = raw.split('\n')[0].replace(/\s+/g, ' ').trim();
+        const heading = /^H[1-6]$/.test(tag) || prev.getAttribute('role') === 'heading' || tag === 'LEGEND';
+        if (firstLine && (heading || firstLine.length < 80)) chunks.push(firstLine);
+        prev = prev.previousElementSibling;
+        hops += 1;
+      }
+      if (node.getAttribute && node.getAttribute('aria-label')) chunks.push(node.getAttribute('aria-label'));
+      node = node.parentElement;
+      depth += 1;
+    }
+    return chunks.find((text) => parseRole(text)) || chunks.find((text) => String(text || '').trim()) || '';
+  }
+
+  function nearestRole(el) {
+    return parseRole(questionTitle(el));
+  }
+
+  function firstName(person) {
+    return String(person.fullName || person.name || '').trim().split(/\s+/)[0] || '';
+  }
+  function lastName(person) {
+    const parts = String(person.fullName || person.name || '').trim().split(/\s+/);
+    return parts.length > 1 ? parts.slice(1).join(' ') : '';
+  }
+
+  function matchFieldValue(raw, person) {
+    if (!person) return null;
+    const text = norm(raw);
+    if (!text) return null;
+    const hit = (re) => re.test(text);
+    const take = (re, value) => (hit(re) ? (value || null) : undefined);
+
+    const checks = [
+      take(/\bgiven name\b|\bfirst name\b/, firstName(person)),
+      take(/\bfamily name\b|\blast name\b|\bsurname\b/, lastName(person)),
+      take(/\bgithub\b|\bgh\b/, person.github),
+      take(/\blinkedin\b/, person.linkedin),
+      take(/\bresume\b|\bcv\b|curriculum/, person.resume),
+      take(/\b(portfolio|website|homepage|personal site)\b/, hit(/\b(project|team|company|event|school|github|linkedin)\b/) ? null : person.portfolio),
+      take(/\bdiscord\b/, person.discord),
+      take(/\bdevpost\b|\bdevfolio\b/, person.devfolio),
+      take(/\bemergency\b/, person.emergency),
+      take(/\be ?mail\b|\bmail\b/, person.email),
+      take(/\b(phone|mobile|whatsapp|tel)\b|\bcontact\s*(number|no|num)\b|\b(leader|participant|member|phone|mobile|whatsapp)\s+no\b/, person.phone),
+      take(/t ?shirt|shirt size|apparel size|swag size/, person.tshirt),
+      take(/\bdiet\b|\bdietary\b|meal pref/, person.diet),
+      take(/\b(sec|student|college|university|campus|registration|roll|admission)\b\s*(id|no|num|number|code)\b|\broll no\b|\breg(istration)? no\b/, person.secId)
+    ];
+    for (const value of checks) {
+      if (value !== undefined) return value;
+    }
+
+    const vars = (person.customVariables || [])
+      .filter((item) => item && item.name && item.value)
+      .sort((a, b) => b.name.length - a.name.length);
+    for (const item of vars) {
+      const name = norm(item.name);
+      if (name.length < 3 && !name.includes(' ')) continue;
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp('(^|\\s)' + escaped + '(\\s|$)', 'i').test(text)) return item.value;
+    }
+
+    const broad = [
+      take(/\b(degree|major|field of study)\b/, person.degree),
+      take(/\b(graduat\w*|passing)\b.*\b(year|date)\b|\bgrad year\b|\bbatch year\b/, person.gradYear),
+      take(/\b(college|university|school|institution|institute)\b(?!.*\b(id|email|code|number)\b)/, person.college),
+      take(/\b(city|country|location|residence|district)\b/, person.location),
+      take(/\b(full )?name\b/, (!hit(/\b(user name|file name|team name|event name|project name|display name|college name|university name|school name|company name)\b/) ? (person.fullName || person.name) : null))
+    ];
+    for (const value of broad) {
+      if (value !== undefined) return value;
+    }
+    return null;
+  }
+
+  const STOP = new Set(['this', 'that', 'your', 'with', 'from', 'have', 'what', 'when', 'where', 'which', 'about', 'into', 'they', 'them', 'than', 'then', 'will', 'would', 'could', 'should', 'tell', 'does', 'please', 'write', 'describe']);
+
+  function matchSnippet(raw, snippets) {
+    const text = norm(raw);
+    if (!text || !snippets || !snippets.length) return null;
+    let best = null;
+    let bestHits = 0;
+    snippets.forEach((snip) => {
+      const words = norm(snip.title).split(' ').filter((word) => word.length > 2 && !STOP.has(word));
+      if (words.length < 2) return;
+      const hits = words.filter((word) => text.includes(word)).length;
+      if (hits >= 2 && hits / words.length >= 0.5 && hits > bestHits) {
+        bestHits = hits;
+        best = snip.content;
+      }
+    });
+    return best;
+  }
+
+  function setNativeValue(el, value) {
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value') && Object.getOwnPropertyDescriptor(proto, 'value').set;
+    if (setter) setter.call(el, value);
+    else el.value = value;
+  }
+
+  function chooseOption(el, value) {
+    const want = norm(value);
+    if (!want) return false;
+    let best = null;
+    let bestScore = 0;
+    Array.from(el.options || []).forEach((opt) => {
+      const text = norm(opt.text);
+      const val = norm(opt.value);
+      let score = 0;
+      if (val === want || text === want) score = 100;
+      else if (text.startsWith(want) || val.startsWith(want)) score = 80;
+      else if ((text + ' ' + val).split(' ').includes(want)) score = 70;
+      else if (want.length >= 3 && (text.includes(want) || val.includes(want))) score = 60;
+      if (score > bestScore) { bestScore = score; best = opt; }
+    });
+    if (!best || bestScore < 60) return false;
+    el.value = best.value;
+    el.selectedIndex = Array.from(el.options).indexOf(best);
+    return true;
+  }
+
+  function flash(el) {
+    el.classList.add('hackfill-flash-highlight');
+    setTimeout(() => el.classList.remove('hackfill-flash-highlight'), 1200);
+  }
+
+  function fillElement(el, value) {
+    if (value === undefined || value === null || value === '') return false;
+    const next = String(value);
+    if (el.isContentEditable) {
+      if ((el.innerText || '').trim() === next) return false;
+      el.focus();
+      el.textContent = next;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: next }));
+      flash(el);
+      return true;
+    }
+    if (el.tagName === 'SELECT') {
+      if (norm(el.value) === norm(next) || norm(el.options[el.selectedIndex] && el.options[el.selectedIndex].text) === norm(next)) return false;
+      if (!chooseOption(el, next)) return false;
+    } else if (el.value === next) {
+      return false;
+    } else {
+      setNativeValue(el, next);
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    flash(el);
+    return true;
+  }
+
+  function fieldSignature(text) {
+    if (/\bgithub\b/.test(text)) return 'github';
+    if (/\blinkedin\b/.test(text)) return 'linkedin';
+    if (/\b(resume|cv)\b|curriculum/.test(text)) return 'resume';
+    if (/\bdiscord\b/.test(text)) return 'discord';
+    if (/\be ?mail\b|\bmail\b/.test(text)) return 'email';
+    if (/\b(phone|mobile|whatsapp)\b|\b(leader|participant|member)\s+no\b/.test(text)) return 'phone';
+    if (/\b(full )?name\b/.test(text) && !/\b(user name|team name|event name|project name|college name|university name|school name)\b/.test(text)) return 'name';
+    if (/\b(college|university|school)\b/.test(text) && !/\b(id|email)\b/.test(text)) return 'college';
+    return null;
+  }
+
+  function repeatKey(text) {
+    if (/confirm|verify|re enter|repeat/.test(text)) return null;
+    return fieldSignature(text) ? text : null;
+  }
+
+  async function performAutofill(profileIn, teammatesIn, teamIn, snippetsIn) {
+    if (!profileIn) await loadUserData();
+    const profile = profileIn || cached.profile;
+    const teammates = teammatesIn || cached.teammates;
+    const team = teamIn || cached.team;
+    const snippets = snippetsIn || cached.snippets;
+    const roster = buildRoster(profile, teammates, team);
+    const elements = getFormElements();
+    const items = elements.map((el) => {
+      const own = fieldText(el);
+      const title = questionTitle(el);
+      const role = parseRole(title) || parseRole(own) || nearestRole(el);
+      const typeText = norm([own, title].filter(Boolean).join(' '));
+      return { el, own: typeText, role, key: role ? null : repeatKey(typeText) };
+    });
+    const counts = {};
+    items.forEach((item) => { if (item.key) counts[item.key] = (counts[item.key] || 0) + 1; });
+    const seen = {};
+    let filledCount = 0;
+    const used = new Set();
+
+    items.forEach((item) => {
+      let role = item.role;
+      if (!role && item.key && counts[item.key] >= 2) {
+        const n = seen[item.key] || 0;
+        seen[item.key] = n + 1;
+        role = n === 0 ? { kind: 'lead' } : { kind: 'friend', n };
+      }
+      if (!role) role = { kind: 'lead' };
+      const person = personForRole(role, roster);
+      if (!person) return;
+      let value = matchFieldValue(item.own, person);
+      const long = item.el.tagName === 'TEXTAREA' || item.el.isContentEditable;
+      if (!value && long) value = matchSnippet(item.own, snippets);
+      if (value && fillElement(item.el, value)) {
+        filledCount += 1;
+        if (person.fullName || person.name) used.add(person.fullName || person.name);
       }
     });
 
-    return filledCount;
+    filledCount += fillRadios(roster);
+    return { filledCount, names: Array.from(used) };
   }
 
-  // Show In-Page Mini Toast
+  function optionText(el) {
+    const label = el.closest('label');
+    if (label) return norm(cleanLabel(label));
+    if (el.id) {
+      const safe = window.CSS && CSS.escape ? CSS.escape(el.id) : el.id;
+      const node = document.querySelector(`label[for="${safe}"]`);
+      if (node) return norm(cleanLabel(node));
+    }
+    return norm(el.value);
+  }
+
+  function fillRadios(roster) {
+    const seen = new Set();
+    let count = 0;
+    document.querySelectorAll('input[type="radio"]').forEach((el) => {
+      if (!el.name || seen.has(el.name) || el.closest('#hackfill-host')) return;
+      seen.add(el.name);
+      const group = Array.from(document.querySelectorAll('input[type="radio"]')).filter((node) => node.name === el.name);
+      const question = fieldText(el) + ' ' + (nearestRole(el) ? '' : '');
+      const fieldset = el.closest('fieldset');
+      const legend = fieldset && fieldset.querySelector('legend') ? fieldset.querySelector('legend').innerText : '';
+      const own = norm([el.name, legend, question].join(' '));
+      const role = parseRole(own) || nearestRole(el) || { kind: 'lead' };
+      const person = personForRole(role, roster);
+      if (!person) return;
+      const desired = matchFieldValue(own, person);
+      if (!desired) return;
+      const want = norm(desired);
+      const match = group.find((radio) => {
+        const opt = optionText(radio);
+        return opt === want || opt.startsWith(want) || (want.length > 2 && opt.includes(want));
+      });
+      if (!match || match.checked) return;
+      match.click();
+      count += 1;
+      flash(match);
+    });
+    return count;
+  }
+
+  function escapeHTML(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function showInPageToast(message) {
-    let toast = document.getElementById('hackfill-inpage-toast');
+    const host = document.getElementById('hackfill-host');
+    const parent = (host && host.shadowRoot) || document.body;
+    if (!parent) return;
+    let toast = parent.querySelector('#hackfill-inpage-toast');
     if (!toast) {
       toast = document.createElement('div');
       toast.id = 'hackfill-inpage-toast';
-      document.body.appendChild(toast);
+      toast.className = 'toast';
+      parent.appendChild(toast);
     }
     toast.textContent = message;
     toast.style.display = 'block';
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => {
-      toast.style.display = 'none';
-    }, 2000);
+    toast._timer = setTimeout(() => { toast.style.display = 'none'; }, 1800);
   }
 
-  // Copy text helper
   async function copyText(text, label) {
     try {
       await navigator.clipboard.writeText(text);
-      showInPageToast(`📋 Copied ${label}!`);
-    } catch (e) {
-      // Fallback
+    } catch (err) {
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -342,491 +511,374 @@
       document.body.appendChild(ta);
       ta.select();
       document.execCommand('copy');
-      document.body.removeChild(ta);
-      showInPageToast(`📋 Copied ${label}!`);
+      ta.remove();
     }
+    showInPageToast('Copied ' + (label || 'value'));
   }
 
-  // Guard flag: prevents async race where MutationObserver fires
-  // while injectFloatingHUD is still awaiting loadUserData
-  let _hudInjecting = false;
+  let hudInjecting = false;
+  let lastField = null;
 
-  // Inject Floating HUD / Quick Buddy Drawer
+  document.addEventListener('focusin', rememberField, true);
+  document.addEventListener('pointerdown', rememberField, true);
+
+  function rememberField(e) {
+    const path = e.composedPath ? e.composedPath() : [e.target];
+    if (path.some((node) => node && (node.id === 'hackfill-host' || node.id === 'hackfill-qr'))) return;
+    const t = path.find((node) => node && node.tagName && (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.tagName === 'SELECT' || node.isContentEditable));
+    if (!t || t === document.body || t === document.documentElement) return;
+    const type = (t.getAttribute && t.getAttribute('type') || '').toLowerCase();
+    if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'password', 'reset', 'image'].includes(type)) return;
+    lastField = t;
+  }
+
+  function cssHref() {
+    try {
+      if (ext && ext.runtime && ext.runtime.getURL) return ext.runtime.getURL('content/hud.css');
+    } catch (err) { /* opened outside the extension */ }
+    return SCRIPT_BASE ? SCRIPT_BASE + 'hud.css' : 'content/hud.css';
+  }
+
   async function injectFloatingHUD() {
-    if (document.getElementById('hackfill-hud-root')) return;
-    if (_hudInjecting) return;
-    _hudInjecting = true;
-
+    if (document.getElementById('hackfill-host') || hudInjecting) return;
+    hudInjecting = true;
     try {
       await loadUserData();
-
-      // Re-check after await (another call may have succeeded while we awaited)
-      if (document.getElementById('hackfill-hud-root')) return;
-
+      if (document.getElementById('hackfill-host')) return;
+      const host = document.createElement('div');
+      host.id = 'hackfill-host';
+      host.style.setProperty('position', 'fixed', 'important');
+      host.style.setProperty('z-index', '2147483646', 'important');
+      host.style.setProperty('margin', '0', 'important');
+      host.style.setProperty('display', 'block', 'important');
+      host.style.setProperty('width', 'max-content', 'important');
+      host.style.setProperty('height', 'max-content', 'important');
+      host.style.setProperty('pointer-events', 'auto', 'important');
+      host.style.setProperty('right', 'auto', 'important');
+      host.style.setProperty('bottom', 'auto', 'important');
+      const shadow = host.attachShadow({ mode: 'open' });
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = cssHref();
+      shadow.appendChild(link);
       const root = document.createElement('div');
-      root.id = 'hackfill-hud-root';
-
-      // HTML Structure of Drawer & Trigger
       root.innerHTML = `
-        <div id="hackfill-drawer" class="hackfill-hidden">
-          <div class="hackfill-d-header">
-            <div class="hackfill-d-title">
-              <span>⚡</span> HackFill Quick Buddy
-            </div>
-            <div class="hackfill-d-header-actions">
-              <button class="hackfill-d-settings" id="hackfill-d-settings-btn" title="Open Full Dashboard & Settings">⚙️ Settings</button>
-              <button class="hackfill-d-close" id="hackfill-d-close-btn" title="Close">&times;</button>
+        <section class="drawer hidden" id="drawer">
+          <div class="head">
+            <div class="title">HACKFILL</div>
+            <div class="head-actions">
+              <button class="mini" id="open-settings" type="button">Edit</button>
+              <button class="close" id="close-drawer" type="button" aria-label="Close">&times;</button>
             </div>
           </div>
-          <div class="hackfill-d-body">
-            <button class="hackfill-btn-primary" id="hackfill-action-autofill">
-              <span>⚡</span> AutoFill Entire Form
-            </button>
-
-            <!-- Quick Personal Links -->
+          <div class="body">
+            <button class="primary" id="do-fill" type="button">Fill this form</button>
             <div>
-              <div class="hackfill-section-heading">
-                <span>My Links (Click to copy)</span>
-              </div>
-              <div class="hackfill-chips-grid" id="hackfill-my-chips">
-                <!-- Rendered dynamically -->
-              </div>
+              <div class="label">Odd question</div>
+              <p class="muted">Click the box on the form, then send a saved detail into it.</p>
+              <select class="pick" id="fill-who"></select>
+              <select class="pick" id="fill-what"></select>
+              <button class="secondary" id="fill-focus" type="button">Fill that box</button>
             </div>
-
-            <!-- Squad Teammates -->
-            <div id="hackfill-squad-section">
-              <div class="hackfill-section-heading">
-                <span>👥 Squad Teammates</span>
-              </div>
-              <div id="hackfill-squad-list">
-                <!-- Rendered dynamically -->
-              </div>
+            <div>
+              <div class="label">Your links</div>
+              <div class="chips" id="my-chips"></div>
             </div>
-
-            <!-- Log Event Button -->
-            <button class="hackfill-btn-secondary" id="hackfill-action-log">
-              <span>📌</span> Log This Hackathon as Applied
-            </button>
-
-            <!-- Open Full Settings Button -->
-            <button class="hackfill-btn-settings" id="hackfill-action-settings">
-              <span>⚙️</span> Edit Profile, Team & Custom Vars
-            </button>
+            <div>
+              <div class="label" id="squad-label">Lineup</div>
+              <div id="squad-list"></div>
+            </div>
+            <button class="secondary" id="do-log" type="button">Log this event as applied</button>
           </div>
-        </div>
+        </section>
+        <button class="trigger" id="trigger" type="button" title="HackFill">
+          <span class="eye"></span><span>HackFill</span>
+        </button>`;
+      shadow.appendChild(root);
+      document.body.appendChild(host);
 
-        <button id="hackfill-trigger-btn" title="Open HackFill Quick Drawer">
-          <span class="hackfill-pulse-dot"></span>
-          <span>⚡ HackFill</span>
-        </button>
-      `;
-
-      document.body.appendChild(root);
-
-      // ── Bind events using root.querySelector to avoid SPA ID conflicts ──
-      const triggerBtn  = root.querySelector('#hackfill-trigger-btn');
-      const drawer      = root.querySelector('#hackfill-drawer');
-      const closeBtn    = root.querySelector('#hackfill-d-close-btn');
-      const autofillBtn = root.querySelector('#hackfill-action-autofill');
-      const logBtn      = root.querySelector('#hackfill-action-log');
-
-      // ── Drag & Smart Positioning Logic ──────────────────────────────────────────
-      let isDragging = false;
-      let dragMoved  = false;
-      let startPointerX = 0;
-      let startPointerY = 0;
-      let startElemX = 0;
-      let startElemY = 0;
+      const trigger = shadow.getElementById('trigger');
+      const drawer = shadow.getElementById('drawer');
+      let dragging = false;
+      let moved = false;
+      let startX = 0;
+      let startY = 0;
+      let originX = 0;
+      let originY = 0;
       let currentX = null;
       let currentY = null;
-      const DRAG_THRESHOLD = 4; // px
 
-      triggerBtn.style.touchAction = 'none';
-
-      function setRootPosition(x, y) {
-        const btnWidth = triggerBtn.offsetWidth || 120;
-        const btnHeight = triggerBtn.offsetHeight || 42;
-        const maxX = Math.max(10, window.innerWidth - btnWidth - 10);
-        const maxY = Math.max(10, window.innerHeight - btnHeight - 10);
-        currentX = Math.max(10, Math.min(maxX, x));
-        currentY = Math.max(10, Math.min(maxY, y));
-
-        root.style.setProperty('left', currentX + 'px', 'important');
-        root.style.setProperty('top', currentY + 'px', 'important');
-        root.style.setProperty('right', 'auto', 'important');
-        root.style.setProperty('bottom', 'auto', 'important');
+      function place(x, y) {
+        const rect = trigger.getBoundingClientRect();
+        const w = rect.width > 20 && rect.width < 280 ? rect.width : 140;
+        const h = rect.height > 16 && rect.height < 80 ? rect.height : 40;
+        currentX = Math.max(8, Math.min(window.innerWidth - w - 8, x));
+        currentY = Math.max(8, Math.min(window.innerHeight - h - 8, y));
+        host.style.setProperty('left', currentX + 'px', 'important');
+        host.style.setProperty('top', currentY + 'px', 'important');
       }
 
-      function updateDrawerPosition() {
-        const btnRect = triggerBtn.getBoundingClientRect();
-        const drawerWidth = 340;
-
-        // Determine horizontal placement
-        let left = btnRect.right - drawerWidth;
-        if (left < 10) {
-          left = btnRect.left;
-        }
-        left = Math.max(10, Math.min(window.innerWidth - drawerWidth - 10, left));
-        drawer.style.setProperty('left', left + 'px', 'important');
-        drawer.style.setProperty('right', 'auto', 'important');
-
-        // Determine vertical placement: pop upwards if in bottom half or >= 380px space above
-        const spaceAbove = btnRect.top;
-        const spaceBelow = window.innerHeight - btnRect.bottom;
-        if (spaceAbove >= 380 || spaceAbove > spaceBelow) {
-          const bottom = window.innerHeight - btnRect.top + 8;
-          drawer.style.setProperty('bottom', bottom + 'px', 'important');
-          drawer.style.setProperty('top', 'auto', 'important');
-          drawer.style.transformOrigin = (left === btnRect.left) ? 'bottom left' : 'bottom right';
+      function placeDrawer() {
+        const rect = trigger.getBoundingClientRect();
+        const width = 320;
+        let left = Math.min(Math.max(8, rect.right - width), window.innerWidth - width - 8);
+        drawer.style.left = left + 'px';
+        const below = window.innerHeight - rect.bottom;
+        if (rect.top > below) {
+          drawer.style.top = 'auto';
+          drawer.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
         } else {
-          const top = btnRect.bottom + 8;
-          drawer.style.setProperty('top', top + 'px', 'important');
-          drawer.style.setProperty('bottom', 'auto', 'important');
-          drawer.style.transformOrigin = (left === btnRect.left) ? 'top left' : 'top right';
+          drawer.style.bottom = 'auto';
+          drawer.style.top = (rect.bottom + 8) + 'px';
         }
       }
 
-      // Initialize position (restore from storage or default to bottom-right)
       try {
-        const saved = localStorage.getItem('__hackfill_pos__');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-            currentX = parsed.x;
-            currentY = parsed.y;
-          }
-        }
-      } catch (_) {}
-
-      if (currentX === null || currentY === null || isNaN(currentX) || isNaN(currentY)) {
-        currentX = Math.max(10, window.innerWidth - 150);
-        currentY = Math.max(10, window.innerHeight - 70);
+        const saved = JSON.parse(localStorage.getItem('__hackfill_pos__') || 'null');
+        if (saved && typeof saved.x === 'number') { currentX = saved.x; currentY = saved.y; }
+      } catch (err) { /* ignore bad position */ }
+      if (currentX === null) {
+        currentX = Math.max(8, window.innerWidth - 150);
+        currentY = Math.max(8, window.innerHeight - 72);
       }
-      setRootPosition(currentX, currentY);
-
-      function onPointerDown(e) {
-        if (e.button !== 0) return; // Only primary mouse button
-        isDragging = true;
-        dragMoved  = false;
-        startPointerX = e.clientX;
-        startPointerY = e.clientY;
-        startElemX = currentX;
-        startElemY = currentY;
-
-        try {
-          triggerBtn.setPointerCapture(e.pointerId);
-        } catch (_) {}
-
-        triggerBtn.style.cursor = 'grabbing';
-      }
+      place(currentX, currentY);
 
       function onPointerMove(e) {
-        if (!isDragging) return;
-        const dx = e.clientX - startPointerX;
-        const dy = e.clientY - startPointerY;
-
-        if (!dragMoved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
-          dragMoved = true;
-          drawer.classList.add('hackfill-hidden');
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (!moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+          moved = true;
+          drawer.classList.add('hidden');
         }
-
-        if (dragMoved) {
-          setRootPosition(startElemX + dx, startElemY + dy);
-        }
-      }
-
-      function onPointerUp(e) {
-        if (!isDragging) return;
-        isDragging = false;
-        triggerBtn.style.cursor = '';
-
-        try {
-          if (e && e.pointerId && triggerBtn.hasPointerCapture(e.pointerId)) {
-            triggerBtn.releasePointerCapture(e.pointerId);
-          }
-        } catch (_) {}
-
-        if (dragMoved) {
-          try {
-            localStorage.setItem('__hackfill_pos__', JSON.stringify({
-              x: currentX,
-              y: currentY
-            }));
-          } catch (_) {}
+        if (moved) {
+          if (e.cancelable) e.preventDefault();
+          place(originX + dx, originY + dy);
         }
       }
-
-      triggerBtn.addEventListener('pointerdown',   onPointerDown);
-      triggerBtn.addEventListener('pointermove',   onPointerMove);
-      triggerBtn.addEventListener('pointerup',     onPointerUp);
-      triggerBtn.addEventListener('pointercancel', onPointerUp);
-
-      // Document-level fallback if pointer capture gets interrupted
-      document.addEventListener('pointermove', (e) => {
-        if (isDragging && dragMoved) onPointerMove(e);
-      });
-      document.addEventListener('pointerup', (e) => {
-        if (isDragging) onPointerUp(e);
-      });
-
-      window.addEventListener('resize', () => {
-        if (currentX !== null && currentY !== null) {
-          setRootPosition(currentX, currentY);
+      function endDrag() {
+        if (!dragging) return;
+        dragging = false;
+        document.removeEventListener('mousemove', onPointerMove, true);
+        document.removeEventListener('mouseup', endDrag, true);
+        if (moved) {
+          try { localStorage.setItem('__hackfill_pos__', JSON.stringify({ x: currentX, y: currentY })); } catch (err) { /* private mode */ }
         }
-        if (!drawer.classList.contains('hackfill-hidden')) {
-          updateDrawerPosition();
-        }
-      }, { passive: true });
+      }
+      function startDrag(e) {
+        if (e.button !== 0 || dragging) return;
+        dragging = true;
+        moved = false;
+        startX = e.clientX;
+        startY = e.clientY;
+        originX = currentX;
+        originY = currentY;
+        document.addEventListener('mousemove', onPointerMove, true);
+        document.addEventListener('mouseup', endDrag, true);
+      }
+      trigger.addEventListener('mousedown', startDrag);
 
+      trigger.addEventListener('click', async () => {
+        if (moved) { moved = false; return; }
+        await loadUserData();
+        renderHUD(shadow);
+        const opening = drawer.classList.contains('hidden');
+        if (opening) {
+          placeDrawer();
+          drawer.classList.remove('hidden');
+        } else drawer.classList.add('hidden');
+      });
+      shadow.getElementById('close-drawer').addEventListener('click', () => drawer.classList.add('hidden'));
       document.addEventListener('click', (e) => {
-        if (!root.contains(e.target)) {
-          drawer.classList.add('hackfill-hidden');
-        }
+        if (e.composedPath && e.composedPath().includes(host)) return;
+        drawer.classList.add('hidden');
       });
-      // ─────────────────────────────────────────────────────────────────────────────
-
-      triggerBtn.addEventListener('click', async () => {
-        // Ignore click if it was actually the end of a drag
-        if (dragMoved) { dragMoved = false; return; }
-        try {
-          await loadUserData();
-          renderHUDChips(root);
-          const isOpening = drawer.classList.contains('hackfill-hidden');
-          if (isOpening) {
-            updateDrawerPosition();
-            drawer.classList.remove('hackfill-hidden');
-          } else {
-            drawer.classList.add('hackfill-hidden');
-          }
-        } catch (e) {
-          console.error('[HackFill] trigger click error:', e);
-        }
-      });
-
-      closeBtn.addEventListener('click', () => {
-        drawer.classList.add('hackfill-hidden');
+      window.addEventListener('resize', () => {
+        if (currentX !== null) place(currentX, currentY);
+        if (!drawer.classList.contains('hidden')) placeDrawer();
       });
 
       const openSettings = () => {
-        if (typeof ext !== 'undefined' && ext.runtime && ext.runtime.sendMessage) {
-          ext.runtime.sendMessage({ action: 'OPEN_SETTINGS' });
-        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL) {
-          window.open(chrome.runtime.getURL('popup/popup.html'), '_blank');
-        }
+        if (ext && ext.runtime && ext.runtime.sendMessage) ext.runtime.sendMessage({ action: 'OPEN_SETTINGS' });
       };
-
-      const settingsBtnHeader = root.querySelector('#hackfill-d-settings-btn');
-      const settingsBtnBody   = root.querySelector('#hackfill-action-settings');
-      if (settingsBtnHeader) settingsBtnHeader.addEventListener('click', openSettings);
-      if (settingsBtnBody)   settingsBtnBody.addEventListener('click', openSettings);
-
-      autofillBtn.addEventListener('click', async () => {
-        try {
-          const count = await performAutofill();
-          showInPageToast(count > 0 ? `⚡ AutoFilled ${count} fields!` : 'No matching fields found');
-          drawer.classList.add('hackfill-hidden');
-        } catch (e) {
-          console.error('[HackFill] autofill error:', e);
-        }
+      shadow.getElementById('open-settings').addEventListener('click', openSettings);
+      shadow.getElementById('do-fill').addEventListener('click', async () => {
+        const result = await performAutofill();
+        showInPageToast(result.filledCount ? 'Filled ' + result.filledCount + ' fields' : 'No matching fields');
+        drawer.classList.add('hidden');
       });
-
-      logBtn.addEventListener('click', async () => {
-        try {
-          const title = document.title.split(' - ')[0].split(' | ')[0].trim() || 'Hackathon Application';
-          const url = window.location.href;
-
-          const res = await ext.storage.local.get(['tracker', 'profile', 'teammates']);
-          const tracker  = res.tracker   || [];
-          const profile  = res.profile   || {};
-          const teammates = res.teammates || [];
-
-          const squadNames = teammates
-            .filter(t => t.squadPos)
-            .sort((a, b) => a.squadPos - b.squadPos)
-            .map(t => t.name)
-            .join(', ');
-
-          const newEntry = {
-            id: 'app_' + Date.now(),
-            eventName: title,
-            eventUrl: url,
-            appliedDate: new Date().toISOString().split('T')[0],
-            status: 'Applied',
-            squad: squadNames
-              ? (profile.fullName ? `${profile.fullName}, ${squadNames}` : squadNames)
-              : (profile.fullName || 'Solo'),
-            notes: 'Logged via HackFill In-Page Buddy'
-          };
-
-          tracker.unshift(newEntry);
-          await ext.storage.local.set({ tracker });
-          showInPageToast(`📌 Logged "${title}" to Tracker!`);
-          drawer.classList.add('hackfill-hidden');
-        } catch (e) {
-          console.error('[HackFill] log error:', e);
-        }
+      shadow.getElementById('fill-who').addEventListener('change', () => renderHUD(shadow));
+      shadow.getElementById('fill-focus').addEventListener('click', () => fillFocusedBox(shadow));
+      shadow.getElementById('do-log').addEventListener('click', async () => {
+        const res = await storageGet(['tracker', 'profile', 'teammates', 'team']);
+        const tracker = res.tracker || [];
+        const roster = buildRoster(res.profile || {}, res.teammates || [], res.team);
+        const squad = roster.filter(Boolean).map((p) => p.name).filter(Boolean).join(', ');
+        tracker.unshift({
+          id: 'app_' + Date.now(),
+          eventName: (document.title || 'Hackathon').split(' - ')[0].split(' | ')[0].trim(),
+          eventUrl: location.href,
+          appliedDate: new Date().toISOString().slice(0, 10),
+          status: 'Applied',
+          squad: squad || 'Solo',
+          notes: 'Logged from the page'
+        });
+        await storageSet({ tracker });
+        showInPageToast('Logged this event');
+        drawer.classList.add('hidden');
       });
-
-      renderHUDChips(root);
+      renderHUD(shadow);
     } finally {
-      _hudInjecting = false;
+      hudInjecting = false;
     }
   }
 
-  // Populate HUD chips from cachedData
-  function renderHUDChips(root) {
-    // Query inside root if provided (avoids SPA ID conflicts), else fallback to document
-    const scope = root || document.getElementById('hackfill-hud-root') || document;
-    const chipsContainer = scope.querySelector('#hackfill-my-chips');
-    const squadContainer = scope.querySelector('#hackfill-squad-list');
-    if (!chipsContainer || !squadContainer) return;
+  function renderHUD(shadow) {
+    const chips = shadow.getElementById('my-chips');
+    const squad = shadow.getElementById('squad-list');
+    const label = shadow.getElementById('squad-label');
+    if (!chips || !squad) return;
+    const profile = asPerson(cached.profile, true) || {};
+    const items = [
+      ['GitHub', profile.github], ['LinkedIn', profile.linkedin], ['Resume', profile.resume],
+      ['Portfolio', profile.portfolio], ['Email', profile.email], ['Phone', profile.phone],
+      ['Discord', profile.discord], ['ID', profile.secId]
+    ].filter((item) => item[1]);
+    (profile.customVariables || []).forEach((cv) => { if (cv.name && cv.value) items.push([cv.name, cv.value]); });
+    chips.innerHTML = items.length
+      ? items.map((item) => `<button class="chip" type="button" data-copy="${escapeHTML(item[1])}">${escapeHTML(item[0])}</button>`).join('')
+      : '<span class="muted">Add your links in HackFill.</span>';
+    chips.querySelectorAll('.chip').forEach((btn) => btn.addEventListener('click', () => copyText(btn.dataset.copy, btn.textContent)));
 
-    const p = cachedData.profile || {};
-    const myItems = [
-      { label: 'GitHub', val: p.github },
-      { label: 'LinkedIn', val: p.linkedin },
-      { label: 'Resume', val: p.resume },
-      { label: 'Portfolio', val: p.portfolio },
-      { label: 'SEC ID', val: p.secId },
-      { label: 'Email', val: p.email },
-      { label: 'Discord', val: p.discord },
-      { label: 'Phone', val: p.phone }
-    ].filter(item => Boolean(item.val));
-
-    // Append custom variables to HUD chips
-    if (p.customVariables && Array.isArray(p.customVariables)) {
-      p.customVariables.forEach(cv => {
-        if (cv.name && cv.value) {
-          myItems.push({ label: cv.name, val: cv.value });
-        }
-      });
-    }
-
-    if (myItems.length === 0) {
-      chipsContainer.innerHTML = '<span style="font-size:11px;color:#64748b;">No profile links saved. Open extension popup to add.</span>';
-    } else {
-      chipsContainer.innerHTML = myItems.map(item => `
-        <button class="hackfill-chip" data-copy="${escapeHTML(item.val)}" title="${escapeHTML(item.val)}">
-          ${escapeHTML(item.label)}
-        </button>
-      `).join('');
-
-      chipsContainer.querySelectorAll('.hackfill-chip').forEach(btn => {
-        btn.addEventListener('click', () => {
-          copyText(btn.dataset.copy, btn.textContent.trim());
-        });
-      });
-    }
-
-    // Squad teammates
-    const tmList = cachedData.teammates || [];
-    if (tmList.length === 0) {
-      squadContainer.innerHTML = '<span style="font-size:11px;color:#64748b;">No teammates in vault.</span>';
-    } else {
-      squadContainer.innerHTML = tmList.map(tm => `
-        <div class="hackfill-tm-item">
-          <div class="hackfill-tm-header">
-            <span>${escapeHTML(tm.name)} ${tm.squadPos ? `<small style="color:#818cf8;">(#${tm.squadPos})</small>` : ''}</span>
-          </div>
-          <div class="hackfill-tm-chips">
-            ${tm.secId ? `<button class="hackfill-chip" data-copy="${escapeHTML(tm.secId)}">🆔 SEC ID</button>` : ''}
-            ${tm.github ? `<button class="hackfill-chip" data-copy="${escapeHTML(tm.github)}">🐙 GH</button>` : ''}
-            ${tm.linkedin ? `<button class="hackfill-chip" data-copy="${escapeHTML(tm.linkedin)}">💼 LI</button>` : ''}
-            ${tm.resume ? `<button class="hackfill-chip" data-copy="${escapeHTML(tm.resume)}">📄 CV</button>` : ''}
-            ${tm.email ? `<button class="hackfill-chip" data-copy="${escapeHTML(tm.email)}">✉️ Email</button>` : ''}
-            ${(tm.customVariables && tm.customVariables.length > 0)
-              ? tm.customVariables.filter(cv => cv.name && cv.value)
-                  .map(cv => `<button class="hackfill-chip" data-copy="${escapeHTML(cv.value)}" title="${escapeHTML(cv.name)}">🔖 ${escapeHTML(cv.name)}</button>`)
-                  .join('')
-              : ''}
-          </div>
-        </div>
-      `).join('');
-
-      squadContainer.querySelectorAll('.hackfill-chip').forEach(btn => {
-        btn.addEventListener('click', () => {
-          copyText(btn.dataset.copy, btn.textContent.trim());
-        });
-      });
-    }
+    const roster = buildRoster(cached.profile, cached.teammates, cached.team);
+    if (label) label.textContent = 'Lineup · ' + roster.length;
+    const rows = roster.map((person, index) => {
+      if (!person) {
+        return `<div class="person"><b>${index === 0 ? 'You' : 'Teammate ' + index}</b><span class="muted">Empty slot</span></div>`;
+      }
+      const bits = [
+        ['GitHub', person.github], ['LinkedIn', person.linkedin], ['Resume', person.resume],
+        ['Email', person.email], ['ID', person.secId], ['Phone', person.phone]
+      ].filter((item) => item[1]);
+      (person.customVariables || []).forEach((cv) => { if (cv.name && cv.value) bits.push([cv.name, cv.value]); });
+      const who = index === 0 ? 'You' : 'Teammate ' + index;
+      return `<div class="person"><b>${escapeHTML(person.name || who)} · ${who}</b><div class="chips">${bits.map((item) => `<button class="chip" type="button" data-copy="${escapeHTML(item[1])}">${escapeHTML(item[0])}</button>`).join('')}</div></div>`;
+    }).join('');
+    squad.innerHTML = rows || '<span class="muted">No lineup yet.</span>';
+    squad.querySelectorAll('.chip').forEach((btn) => btn.addEventListener('click', () => copyText(btn.dataset.copy, btn.textContent)));
+    renderFillPicks(shadow, roster);
   }
 
-  function escapeHTML(str) {
-    if (!str) return '';
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+  const FILL_FIELDS = [
+    ['fullName', 'Name'], ['email', 'Email'], ['phone', 'Phone'], ['college', 'College'],
+    ['degree', 'Degree'], ['gradYear', 'Grad year'], ['secId', 'College ID'], ['github', 'GitHub'],
+    ['linkedin', 'LinkedIn'], ['portfolio', 'Portfolio'], ['resume', 'Resume'], ['discord', 'Discord'],
+    ['location', 'City'], ['tshirt', 'T-shirt'], ['diet', 'Diet'], ['devfolio', 'Devfolio']
+  ];
+
+  function valueForKey(person, key) {
+    if (!person || !key) return '';
+    if (key.indexOf('cv:') === 0) {
+      const name = norm(key.slice(3));
+      const found = (person.customVariables || []).find((item) => norm(item.name) === name);
+      return found ? found.value : '';
+    }
+    if (key === 'fullName') return person.fullName || person.name || '';
+    return person[key] || '';
   }
 
-  // Listen for messages from popup or background service worker
-  if (typeof ext !== 'undefined' && ext.runtime && ext.runtime.onMessage) {
+  function renderFillPicks(shadow, roster) {
+    const who = shadow.getElementById('fill-who');
+    const what = shadow.getElementById('fill-what');
+    if (!who || !what) return;
+    const prevWho = who.value;
+    const prevWhat = what.value;
+    who.innerHTML = roster.map((person, index) => {
+      const label = index === 0 ? 'You' : 'Teammate ' + index;
+      const name = person && (person.fullName || person.name);
+      return `<option value="${index}">${escapeHTML(name ? label + ' · ' + name : label + ' · empty')}</option>`;
+    }).join('');
+    if (prevWho && who.querySelector(`option[value="${prevWho}"]`)) who.value = prevWho;
+    const person = roster[Number(who.value)] || roster[0] || {};
+    const options = FILL_FIELDS.slice();
+    (person.customVariables || []).forEach((item) => {
+      if (item && item.name && item.value) options.push(['cv:' + item.name, item.name]);
+    });
+    what.innerHTML = options.map((item) => `<option value="${escapeHTML(item[0])}">${escapeHTML(item[1])}</option>`).join('');
+    if (prevWhat && Array.from(what.options).some((opt) => opt.value === prevWhat)) what.value = prevWhat;
+  }
+
+  function fillFocusedBox(shadow) {
+    const el = lastField;
+    if (!el || !el.isConnected) {
+      showInPageToast('Click the form box first');
+      return;
+    }
+    const who = shadow.getElementById('fill-who');
+    const what = shadow.getElementById('fill-what');
+    const roster = buildRoster(cached.profile, cached.teammates, cached.team);
+    const person = roster[Number(who && who.value)];
+    const value = valueForKey(person, what && what.value);
+    if (!value) {
+      showInPageToast('That detail is empty');
+      return;
+    }
+    try { el.focus(); } catch (err) { /* the box can still take a value */ }
+    showInPageToast(fillElement(el, value) ? 'Filled' : 'Already filled');
+  }
+
+  if (ext && ext.runtime && ext.runtime.onMessage) {
     ext.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (request.action === 'AUTOFILL_PAGE') {
-        performAutofill(request.payload?.profile, request.payload?.teammates)
-          .then(filledCount => {
-            sendResponse({ status: 'ok', filledCount });
-          })
-          .catch(err => {
-            sendResponse({ status: 'error', error: err.toString() });
-          });
-        return true; // async
+        const payload = request.payload || {};
+        performAutofill(payload.profile, payload.teammates, payload.team, payload.snippets)
+          .then((result) => sendResponse({ status: 'ok', filledCount: result.filledCount, names: result.names }))
+          .catch((err) => sendResponse({ status: 'error', error: String(err) }));
+        return true;
       }
-
       if (request.action === 'CHECK_FORMS') {
         const inputs = getFormElements();
-        sendResponse({
-          hasForm: inputs.length > 0,
-          inputCount: inputs.length
-        });
+        sendResponse({ hasForm: inputs.length > 0, inputCount: inputs.length });
         return true;
       }
-
       if (request.action === 'INSERT_SNIPPET') {
-        // Insert snippet text into active element
         const active = document.activeElement;
-        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
           fillElement(active, request.text);
-          showInPageToast('Inserted snippet!');
-          sendResponse({ success: true });
+          showInPageToast('Pasted');
         } else {
-          copyText(request.text, 'Snippet');
-          sendResponse({ success: true, copied: true });
+          copyText(request.text, 'value');
         }
+        sendResponse({ success: true });
         return true;
       }
+      return undefined;
     });
   }
 
-  // Initialize on page
   function init() {
-    const inputs = getFormElements();
-    if (inputs.length > 0) {
-      injectFloatingHUD();
-    }
+    if (getFormElements().length > 0) injectFloatingHUD();
   }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-
-  // Also observe dynamic forms (SPAs, React, Google Forms dynamic loading)
+  let observeTimer = null;
   const observer = new MutationObserver(() => {
-    const root = document.getElementById('hackfill-hud-root');
-    if (!root) {
-      const inputs = getFormElements();
-      if (inputs.length > 0) {
-        injectFloatingHUD();
-      }
+    if (document.getElementById('hackfill-host')) {
+      observer.disconnect();
+      return;
     }
+    clearTimeout(observeTimer);
+    observeTimer = setTimeout(() => {
+      if (document.getElementById('hackfill-host')) {
+        observer.disconnect();
+        return;
+      }
+      if (getFormElements().length > 0) injectFloatingHUD();
+    }, 350);
   });
-
-  observer.observe(document.body || document.documentElement, {
-    childList: true,
-    subtree: true
-  });
+  if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+  else document.addEventListener('DOMContentLoaded', () => {
+    if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+  }, { once: true });
 })();

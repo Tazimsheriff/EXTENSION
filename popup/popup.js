@@ -1,1256 +1,1032 @@
 /**
- * HackFill - Extension Popup Script
- * Cross-browser compatible: Chrome + Firefox
+ * HackFill popup. Works in Chrome and Firefox (MV3).
+ * Team model: you are slot 0. team.slots[i] is the person forms call "Teammate (i+1)" and "Member (i+2)".
  */
 
-// ── Browser API shim ───────────────────────────────────────────────────────────────────────────
-// Firefox exposes `browser.*` (Promise-based); Chrome exposes `chrome.*` (callback-based).
-// We normalise to a single `ext` object so the rest of this file works on both.
-const ext = (typeof browser !== 'undefined') ? browser : chrome;
+const ext = (typeof browser !== 'undefined') ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+const MAX_TEAM = 6;
 
-// Storage Abstraction (ext.storage.local or fallback to localStorage)
 const Storage = {
   async get(keys) {
-    if (typeof ext !== 'undefined' && ext.storage && ext.storage.local) {
-      return ext.storage.local.get(keys);
-    }
+    if (ext && ext.storage && ext.storage.local) return ext.storage.local.get(keys);
     const res = {};
-    const list = Array.isArray(keys) ? keys : [keys];
-    list.forEach(k => {
-      const val = localStorage.getItem('hackfill_' + k);
-      if (val) {
-        try { res[k] = JSON.parse(val); } catch (e) { res[k] = val; }
+    (Array.isArray(keys) ? keys : [keys]).forEach((k) => {
+      const raw = localStorage.getItem('hackfill_' + k);
+      if (raw) {
+        try { res[k] = JSON.parse(raw); } catch (e) { res[k] = raw; }
       }
     });
     return res;
   },
-
   async set(data) {
-    if (typeof ext !== 'undefined' && ext.storage && ext.storage.local) {
-      return ext.storage.local.set(data);
-    }
-    Object.entries(data).forEach(([k, v]) => {
-      localStorage.setItem('hackfill_' + k, JSON.stringify(v));
-    });
+    if (ext && ext.storage && ext.storage.local) return ext.storage.local.set(data);
+    Object.entries(data).forEach(([k, v]) => localStorage.setItem('hackfill_' + k, JSON.stringify(v)));
   }
 };
 
-// Demo Data
 const DEMO_DATA = {
   profile: {
-    fullName: "Alex Rivera",
-    email: "alex.rivera@cs.edu",
-    phone: "+1 (415) 890-3412",
-    location: "San Francisco, CA",
-    github: "https://github.com/alexrivera-dev",
-    linkedin: "https://linkedin.com/in/alex-rivera-tech",
-    portfolio: "https://alexrivera.dev",
-    resume: "https://drive.google.com/file/d/1demo-alex-rivera-resume/view",
-    discord: "arivera#4092",
-    devfolio: "https://devfolio.co/@alexrivera",
-    college: "University of California, Berkeley",
-    degree: "B.S. in Electrical Engineering & Computer Science",
-    gradYear: "2026",
-    secId: "21CS104",
+    fullName: 'Alex Rivera',
+    email: 'alex.rivera@cs.edu',
+    phone: '+1 (415) 890-3412',
+    location: 'San Francisco, CA',
+    github: 'https://github.com/alexrivera-dev',
+    linkedin: 'https://linkedin.com/in/alex-rivera-tech',
+    portfolio: 'https://alexrivera.dev',
+    resume: 'https://drive.google.com/file/d/1demo-alex-rivera-resume/view',
+    discord: 'arivera',
+    devfolio: 'https://devfolio.co/@alexrivera',
+    college: 'University of California, Berkeley',
+    degree: 'B.S. Electrical Engineering & Computer Science',
+    gradYear: '2026',
+    secId: '21CS104',
     customVariables: [
-      { id: "cv_demo_1", name: "SEC ID", value: "21CS104" },
-      { id: "cv_demo_2", name: "HackerRank ID", value: "alex_hack26" },
-      { id: "cv_demo_3", name: "Telegram", value: "@alexrivera_dev" }
+      { id: 'cv_demo_1', name: 'HackerRank ID', value: 'alex_hack26' },
+      { id: 'cv_demo_2', name: 'Telegram', value: '@alexrivera_dev' }
     ],
-    tshirt: "L",
-    diet: "Vegetarian",
-    emergency: "Maria Rivera (+1 415-555-0199)"
+    tshirt: 'L',
+    diet: 'Vegetarian',
+    emergency: 'Maria Rivera (+1 415-555-0199)'
   },
   teammates: [
     {
-      id: "tm_" + Date.now() + "_1",
-      name: "Sophia Chen",
-      email: "sophia.chen@mit.edu",
-      phone: "+1 (617) 555-0144",
-      college: "MIT",
-      secId: "21CS205",
-      github: "https://github.com/sophiachen-ai",
-      linkedin: "https://linkedin.com/in/sophiachen-ai",
-      resume: "https://drive.google.com/file/d/1demo-sophia-resume/view",
-      discord: "sophia#1337",
-      tshirt: "M",
-      diet: "None",
-      squadPos: 1
+      id: 'tm_demo_1', name: 'Sophia Chen', email: 'sophia.chen@mit.edu', phone: '+1 (617) 555-0144',
+      college: 'MIT', degree: 'B.S. Computer Science', gradYear: '2026', secId: '21CS205', location: 'Cambridge, MA',
+      github: 'https://github.com/sophiachen-ai', linkedin: 'https://linkedin.com/in/sophiachen-ai',
+      portfolio: 'https://sophiachen.dev', resume: 'https://drive.google.com/file/d/1demo-sophia-resume/view',
+      discord: 'sophia', tshirt: 'M', diet: 'None',
+      customVariables: [{ id: 'cv_s1', name: 'HackerRank ID', value: 'sophia_chen' }]
     },
     {
-      id: "tm_" + Date.now() + "_2",
-      name: "Marcus Vance",
-      email: "marcus.vance@stanford.edu",
-      phone: "+1 (650) 555-0182",
-      college: "Stanford University",
-      secId: "21CS208",
-      github: "https://github.com/marcusvance",
-      linkedin: "https://linkedin.com/in/marcus-vance",
-      resume: "https://drive.google.com/file/d/1demo-marcus-resume/view",
-      discord: "mvance#9811",
-      tshirt: "XL",
-      diet: "Halal",
-      squadPos: 2
+      id: 'tm_demo_2', name: 'Marcus Vance', email: 'marcus.vance@stanford.edu', phone: '+1 (650) 555-0182',
+      college: 'Stanford University', degree: 'B.S. Computer Science', gradYear: '2027', secId: '21CS208', location: 'Palo Alto, CA',
+      github: 'https://github.com/marcusvance', linkedin: 'https://linkedin.com/in/marcus-vance',
+      resume: 'https://drive.google.com/file/d/1demo-marcus-resume/view', discord: 'mvance', tshirt: 'XL', diet: 'Halal',
+      customVariables: []
     },
     {
-      id: "tm_" + Date.now() + "_3",
-      name: "Ananya Patel",
-      email: "ananya.patel@georgiatech.edu",
-      phone: "+1 (404) 555-0163",
-      college: "Georgia Tech",
-      github: "https://github.com/ananyapatel",
-      linkedin: "https://linkedin.com/in/ananya-patel",
-      resume: "https://drive.google.com/file/d/1demo-ananya-resume/view",
-      discord: "ananya_p#5512",
-      tshirt: "S",
-      diet: "Vegan",
-      squadPos: 3
+      id: 'tm_demo_3', name: 'Ananya Patel', email: 'ananya.patel@georgiatech.edu', phone: '+1 (404) 555-0163',
+      college: 'Georgia Tech', degree: 'B.S. Computer Science', gradYear: '2026', secId: '21CS301', location: 'Atlanta, GA',
+      github: 'https://github.com/ananyapatel', linkedin: 'https://linkedin.com/in/ananya-patel',
+      resume: 'https://drive.google.com/file/d/1demo-ananya-resume/view', discord: 'ananya', tshirt: 'S', diet: 'Vegan',
+      customVariables: []
     }
   ],
+  team: { size: 4, slots: ['tm_demo_1', 'tm_demo_2', 'tm_demo_3'] },
   snippets: [
-    {
-      id: "snip_1",
-      title: "Tell us about a project you are proud of",
-      category: "Pitch",
-      content: "Built an edge-AI audio transcription system using WebAssembly and ONNX Runtime in the browser. It processes 60 FPS streaming audio completely offline with zero latency, winning 1st place in the accessibility track."
-    },
-    {
-      id: "snip_2",
-      title: "Why do you want to participate in this hackathon?",
-      category: "Motivation",
-      content: "I thrive in fast-paced 36-hour hackathons where interdisciplinary builders converge. My team wants to push the boundaries of browser-based agent workflows, leverage modern APIs, and ship a functional product that solves real pain points."
-    },
-    {
-      id: "snip_3",
-      title: "Personal Bio (100 words)",
-      category: "Bio",
-      content: "Full-stack developer and junior at UC Berkeley passionate about human-computer interaction, distributed systems, and modern web tooling. Active open-source contributor and hackathon veteran with 6+ podium finishes."
-    }
+    { id: 'snip_1', title: 'Tell us about a project you are proud of', category: 'Pitch', content: 'Built an offline audio transcription tool that runs in the browser with WebAssembly and ONNX. It won the accessibility track at a 36-hour hackathon.' },
+    { id: 'snip_2', title: 'Why do you want to participate in this hackathon?', category: 'Motivation', content: 'I want a weekend with builders who ship. My team is aiming for a working product, not a slide deck, and this event is the right room for that.' },
+    { id: 'snip_3', title: 'Personal bio', category: 'Bio', content: 'Student developer focused on interfaces, distributed systems, and hackathons. I like small teams, clear problems, and code that still works on Sunday night.' }
   ],
   tracker: [
-    {
-      id: "app_1",
-      eventName: "TreeHacks 2026",
-      eventUrl: "https://treehacks.com",
-      appliedDate: "2026-01-15",
-      status: "Accepted",
-      squad: "Sophia Chen, Marcus Vance",
-      notes: "Selected for AI & Healthcare track! Team code #TH26-88"
-    },
-    {
-      id: "app_2",
-      eventName: "HackMIT 2026",
-      eventUrl: "https://hackmit.org",
-      appliedDate: "2026-02-01",
-      status: "Applied",
-      squad: "Alex, Sophia, Marcus, Ananya",
-      notes: "Confirmation email received. Decisions out in 2 weeks."
-    }
+    { id: 'app_1', eventName: 'TreeHacks 2026', eventUrl: 'https://treehacks.com', appliedDate: '2026-01-15', status: 'Accepted', squad: 'Alex Rivera, Sophia Chen, Marcus Vance', notes: 'AI track. Team code TH26-88' }
   ]
 };
 
-// State
-let appState = {
-  profile: {},
-  teammates: [],
-  snippets: [],
-  tracker: []
-};
+const appState = { profile: {}, teammates: [], snippets: [], tracker: [], team: { size: 1, slots: [] } };
 
-// DOM Elements
+const $ = (id) => document.getElementById(id);
 const elements = {
-  // Tabs
   navTabs: document.querySelectorAll('.nav-tab'),
   tabPanes: document.querySelectorAll('.tab-pane'),
-  teammateCount: document.getElementById('teammateCount'),
-  trackerCount: document.getElementById('trackerCount'),
-  
-  // Header / Quick actions
-  popoutBtn: document.getElementById('popoutBtn'),
-  quickAutofillBtn: document.getElementById('quickAutofillBtn'),
-  quickLogBtn: document.getElementById('quickLogBtn'),
-  pageDetectBadge: document.getElementById('pageDetectBadge'),
-  
-  // Profile
-  profileForm: document.getElementById('profileForm'),
-  customVarsContainer: document.getElementById('customVarsContainer'),
-  addCustomVarBtn: document.getElementById('addCustomVarBtn'),
-  autoSaveStatus: document.getElementById('autoSaveStatus'),
-  autoSaveText: document.getElementById('autoSaveText'),
-  
-  // Teammates
-  teammatesList: document.getElementById('teammatesList'),
-  teammateSearch: document.getElementById('teammateSearch'),
-  addTeammateBtn: document.getElementById('addTeammateBtn'),
-  teammateModal: document.getElementById('teammateModal'),
-  teammateForm: document.getElementById('teammateForm'),
-  closeTeammateModal: document.getElementById('closeTeammateModal'),
-  cancelTeammateBtn: document.getElementById('cancelTeammateBtn'),
-  teammateModalTitle: document.getElementById('teammateModalTitle'),
-  
-  // Snippets
-  snippetsList: document.getElementById('snippetsList'),
-  addSnippetBtn: document.getElementById('addSnippetBtn'),
-  snippetModal: document.getElementById('snippetModal'),
-  snippetForm: document.getElementById('snippetForm'),
-  closeSnippetModal: document.getElementById('closeSnippetModal'),
-  cancelSnippetBtn: document.getElementById('cancelSnippetBtn'),
-  snippetModalTitle: document.getElementById('snippetModalTitle'),
-  
-  // Tracker
-  trackerList: document.getElementById('trackerList'),
-  statusFilter: document.getElementById('statusFilter'),
-  addAppBtn: document.getElementById('addAppBtn'),
-  trackerModal: document.getElementById('trackerModal'),
-  trackerForm: document.getElementById('trackerForm'),
-  closeTrackerModal: document.getElementById('closeTrackerModal'),
-  cancelTrackerBtn: document.getElementById('cancelTrackerBtn'),
-  trackerModalTitle: document.getElementById('trackerModalTitle'),
-  
-  // Settings
-  exportDataBtn: document.getElementById('exportDataBtn'),
-  importDataInput: document.getElementById('importDataInput'),
-  loadDemoBtn: document.getElementById('loadDemoBtn'),
-  clearDataBtn: document.getElementById('clearDataBtn'),
-  
-  // Toast
-  toast: document.getElementById('toast')
+  teammateCount: $('teammateCount'),
+  trackerCount: $('trackerCount'),
+  popoutBtn: $('popoutBtn'),
+  quickAutofillBtn: $('quickAutofillBtn'),
+  quickLogBtn: $('quickLogBtn'),
+  pageDetectBadge: $('pageDetectBadge'),
+  profileForm: $('profileForm'),
+  customVarsContainer: $('customVarsContainer'),
+  addCustomVarBtn: $('addCustomVarBtn'),
+  autoSaveStatus: $('autoSaveStatus'),
+  autoSaveText: $('autoSaveText'),
+  teammatesList: $('teammatesList'),
+  teammateSearch: $('teammateSearch'),
+  addTeammateBtn: $('addTeammateBtn'),
+  teamSizeBar: $('teamSizeBar'),
+  lineup: $('lineup'),
+  teammateModal: $('teammateModal'),
+  teammateForm: $('teammateForm'),
+  closeTeammateModal: $('closeTeammateModal'),
+  cancelTeammateBtn: $('cancelTeammateBtn'),
+  teammateModalTitle: $('teammateModalTitle'),
+  tmSaveState: $('tmSaveState'),
+  snippetsList: $('snippetsList'),
+  addSnippetBtn: $('addSnippetBtn'),
+  snippetModal: $('snippetModal'),
+  snippetForm: $('snippetForm'),
+  closeSnippetModal: $('closeSnippetModal'),
+  cancelSnippetBtn: $('cancelSnippetBtn'),
+  snippetModalTitle: $('snippetModalTitle'),
+  trackerList: $('trackerList'),
+  statusFilter: $('statusFilter'),
+  addAppBtn: $('addAppBtn'),
+  trackerModal: $('trackerModal'),
+  trackerForm: $('trackerForm'),
+  closeTrackerModal: $('closeTrackerModal'),
+  cancelTrackerBtn: $('cancelTrackerBtn'),
+  trackerModalTitle: $('trackerModalTitle'),
+  exportDataBtn: $('exportDataBtn'),
+  importDataInput: $('importDataInput'),
+  loadDemoBtn: $('loadDemoBtn'),
+  clearDataBtn: $('clearDataBtn'),
+  toast: $('toast')
 };
 
-// Initialize Application
+let teammateSnapshot = null;
+let teammateCreatedId = null;
+let teammateSaveTimer = null;
+let profileSaveTimer = null;
+let profileBound = false;
+
 document.addEventListener('DOMContentLoaded', async () => {
   await loadState();
   initNavigation();
   initProfile();
-  initTeammates();
+  initSquad();
   initSnippets();
   initTracker();
   initSettings();
   checkCurrentPageForms();
+  window.addEventListener('pagehide', () => {
+    saveProfileImmediate(false);
+    if (!elements.teammateModal.classList.contains('hidden')) persistTeammateFromForm();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeTopModal();
+  });
 });
 
-// Load state from Chrome Storage
-async function loadState() {
-  const data = await Storage.get(['profile', 'teammates', 'snippets', 'tracker']);
-  appState.profile = data.profile || {};
-  appState.teammates = data.teammates || [];
-  appState.snippets = data.snippets || [];
-  appState.tracker = data.tracker || [];
+function clampSize(n) {
+  const size = Number(n);
+  if (!Number.isFinite(size)) return 1;
+  return Math.max(1, Math.min(MAX_TEAM, Math.round(size)));
+}
 
+function normalizeTeam(team, teammates) {
+  const ids = new Set((teammates || []).map((t) => t.id));
+  if (team && Array.isArray(team.slots)) {
+    const size = clampSize(team.size || team.slots.length + 1);
+    const slots = [];
+    for (let i = 0; i < size - 1; i++) {
+      const id = team.slots[i];
+      slots.push(id && ids.has(id) ? id : null);
+    }
+    return { size, slots };
+  }
+  const sparse = [];
+  (teammates || []).forEach((t) => {
+    const pos = Number(t.squadPos);
+    if (pos >= 1 && pos <= MAX_TEAM - 1) sparse[pos - 1] = t.id;
+  });
+  const last = sparse.length ? sparse.length : 0;
+  const slots = [];
+  for (let i = 0; i < last; i++) slots.push(sparse[i] && ids.has(sparse[i]) ? sparse[i] : null);
+  const size = slots.length ? slots.length + 1 : 1;
+  return { size: clampSize(size), slots };
+}
+
+function syncSquadPos() {
+  const slotOf = new Map();
+  appState.team.slots.forEach((id, i) => { if (id) slotOf.set(id, i + 1); });
+  appState.teammates.forEach((t) => { t.squadPos = slotOf.get(t.id) || null; });
+}
+
+async function loadState() {
+  const data = await Storage.get(['profile', 'teammates', 'snippets', 'tracker', 'team']);
+  appState.profile = data.profile || {};
+  appState.teammates = Array.isArray(data.teammates) ? data.teammates : [];
+  appState.snippets = Array.isArray(data.snippets) ? data.snippets : [];
+  appState.tracker = Array.isArray(data.tracker) ? data.tracker : [];
+  appState.team = normalizeTeam(data.team, appState.teammates);
+  if (!data.team) {
+    syncSquadPos();
+    await Storage.set({ team: appState.team, teammates: appState.teammates });
+  }
   updateBadgeCounts();
 }
 
 function updateBadgeCounts() {
-  elements.teammateCount.textContent = appState.teammates.length;
-  elements.trackerCount.textContent = appState.tracker.length;
+  elements.teammateCount.textContent = appState.teammates.length ? String(appState.teammates.length) : '';
+  elements.trackerCount.textContent = appState.tracker.length ? String(appState.tracker.length) : '';
 }
 
-// Toast notification
-function showToast(message, icon = '✅') {
-  elements.toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+function showToast(message) {
+  elements.toast.textContent = message;
   elements.toast.classList.remove('hidden');
   clearTimeout(elements.toast._timer);
-  elements.toast._timer = setTimeout(() => {
-    elements.toast.classList.add('hidden');
-  }, 2200);
-}
-
-// Clipboard copy helper
-async function copyToClipboard(text, label = 'Copied') {
-  if (!text) {
-    showToast('Field is empty', '⚠️');
-    return;
-  }
-  try {
-    await navigator.clipboard.writeText(text);
-    showToast(`${label} copied to clipboard!`, '📋');
-  } catch (err) {
-    // Fallback
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    showToast(`${label} copied!`, '📋');
-  }
-}
-
-// Navigation Tabs
-function initNavigation() {
-  elements.navTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const targetTab = tab.dataset.tab;
-      elements.navTabs.forEach(t => t.classList.remove('active'));
-      elements.tabPanes.forEach(p => p.classList.remove('active'));
-
-      tab.classList.add('active');
-      document.getElementById(`tab-${targetTab}`).classList.add('active');
-    });
-  });
-
-  // Header quick autofill
-  elements.quickAutofillBtn.addEventListener('click', triggerPageAutofill);
-
-  // Quick log event from current tab
-  elements.quickLogBtn.addEventListener('click', async () => {
-    openTrackerModalForCurrentTab();
-  });
-
-  // Pop out into persistent window
-  if (elements.popoutBtn) {
-    if (window.location.search.includes('standalone=true')) {
-      elements.popoutBtn.style.display = 'none';
-      document.body.style.width = '100%';
-      document.body.style.height = '100vh';
-    } else {
-      elements.popoutBtn.addEventListener('click', () => {
-        if (typeof ext !== 'undefined' && ext.windows && ext.windows.create) {
-          ext.windows.create({
-            url: ext.runtime.getURL('popup/popup.html?standalone=true'),
-            type: 'popup',
-            width: 500,
-            height: 640,
-            top: 100,
-            left: Math.max(0, screen.availWidth - 520)
-          });
-          window.close();
-        } else {
-          window.open('popup.html?standalone=true', 'HackFillDashboard', 'width=500,height=640');
-        }
-      });
-    }
-  }
-}
-
-// Profile Tab
-let autoSaveTimer = null;
-
-function triggerAutoSave() {
-  if (elements.autoSaveStatus) {
-    elements.autoSaveStatus.className = 'autosave-status saving';
-    elements.autoSaveText.textContent = 'Saving...';
-  }
-  clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(async () => {
-    await saveProfileImmediate(false);
-  }, 250);
-}
-
-async function saveProfileImmediate(showNotification = true) {
-  clearTimeout(autoSaveTimer);
-  const formData = new FormData(elements.profileForm);
-  const profile = { ...appState.profile };
-  for (let [key, val] of formData.entries()) {
-    if (key !== 'customVarName' && key !== 'customVarValue') {
-      profile[key] = val.trim();
-    }
-  }
-
-  // Collect custom variables ONLY from the Profile's customVarsContainer
-  const customVars = [];
-  const container = elements.customVarsContainer;
-  if (container) {
-    container.querySelectorAll('.custom-var-row').forEach(row => {
-      const nameInput = row.querySelector('.custom-var-name');
-      const valInput = row.querySelector('.custom-var-val');
-      if (nameInput && nameInput.value.trim()) {
-        customVars.push({
-          id: row.dataset.id || ('cv_' + Date.now() + Math.random().toString(36).substring(2, 6)),
-          name: nameInput.value.trim(),
-          value: valInput ? valInput.value.trim() : ''
-        });
-      }
-    });
-  }
-  profile.customVariables = customVars;
-  appState.profile = profile;
-
-  await Storage.set({ profile });
-
-  if (elements.autoSaveStatus) {
-    elements.autoSaveStatus.className = 'autosave-status saved';
-    elements.autoSaveText.textContent = 'All changes saved';
-  }
-  if (showNotification) {
-    showToast('Profile saved successfully!');
-  }
-}
-
-function renderCustomVariables() {
-  const container = elements.customVarsContainer;
-  if (!container) return;
-  const list = appState.profile.customVariables || [];
-
-  if (list.length === 0) {
-    container.innerHTML = `
-      <div style="font-size:11px; color:#64748b; font-style:italic; padding:4px 0;">
-        No custom variables yet. Click "+ Add Variable" to add SEC ID, HackerRank, etc.
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = list.map(cv => `
-    <div class="custom-var-row" data-id="${escapeHTML(cv.id)}">
-      <input type="text" class="custom-var-name" value="${escapeHTML(cv.name)}" placeholder="Field Name (e.g. SEC ID)">
-      <span class="custom-var-colon">:</span>
-      <input type="text" class="custom-var-val" value="${escapeHTML(cv.value)}" placeholder="Value">
-      <button type="button" class="btn-icon btn-copy-var" title="Copy value">📋</button>
-      <button type="button" class="btn-icon btn-icon-danger btn-del-var" title="Delete">🗑️</button>
-    </div>
-  `).join('');
-
-  // Attach event listeners
-  container.querySelectorAll('.custom-var-name, .custom-var-val').forEach(input => {
-    input.addEventListener('input', triggerAutoSave);
-  });
-
-  container.querySelectorAll('.btn-copy-var').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const row = btn.closest('.custom-var-row');
-      const valInput = row.querySelector('.custom-var-val');
-      const nameInput = row.querySelector('.custom-var-name');
-      if (valInput && valInput.value) {
-        copyToClipboard(valInput.value, nameInput.value || 'Variable');
-      }
-    });
-  });
-
-  container.querySelectorAll('.btn-del-var').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      clearTimeout(autoSaveTimer);
-      const row = btn.closest('.custom-var-row');
-      const rowId = row.dataset.id;
-      row.remove();
-      // Directly filter out the deleted ID from appState
-      if (appState.profile && appState.profile.customVariables) {
-        appState.profile.customVariables = appState.profile.customVariables.filter(cv => cv.id !== rowId);
-      }
-      await saveProfileImmediate(false);
-      renderCustomVariables();
-      showToast('Variable removed');
-    });
-  });
-}
-
-function initProfile() {
-  // Populate form
-  Object.keys(appState.profile).forEach(key => {
-    const input = elements.profileForm.elements[key];
-    if (input) {
-      input.value = appState.profile[key] || '';
-    }
-  });
-
-  // Render custom variables
-  renderCustomVariables();
-
-  // Add custom variable button
-  if (elements.addCustomVarBtn) {
-    elements.addCustomVarBtn.addEventListener('click', () => {
-      if (!appState.profile.customVariables) appState.profile.customVariables = [];
-      appState.profile.customVariables.push({
-        id: 'cv_' + Date.now(),
-        name: '',
-        value: ''
-      });
-      renderCustomVariables();
-      // Focus on the newly added name input
-      const rows = elements.customVarsContainer.querySelectorAll('.custom-var-row');
-      if (rows.length > 0) {
-        const lastRow = rows[rows.length - 1];
-        const nameInput = lastRow.querySelector('.custom-var-name');
-        if (nameInput) nameInput.focus();
-      }
-    });
-  }
-
-  // Real-time Auto-Save: on any input or change event
-  elements.profileForm.addEventListener('input', triggerAutoSave);
-  elements.profileForm.addEventListener('change', triggerAutoSave);
-
-  // Guarantee auto-save on popup close / unload
-  window.addEventListener('beforeunload', () => saveProfileImmediate(false));
-  window.addEventListener('pagehide', () => saveProfileImmediate(false));
-
-  // Explicit form submit
-  elements.profileForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    await saveProfileImmediate(true);
-  });
-
-  // Individual field copy buttons
-  document.querySelectorAll('.btn-copy-field').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const targetId = btn.dataset.target;
-      const input = document.getElementById(targetId);
-      if (input && input.value) {
-        copyToClipboard(input.value, targetId.toUpperCase());
-      } else {
-        showToast(`Please enter your ${targetId} first`, '⚠️');
-      }
-    });
-  });
-}
-
-// Teammates Tab
-
-/**
- * Merges profile custom variable NAMES into a teammate's existing custom vars.
- * - Variables already on the teammate are kept as-is (value preserved).
- * - Variables defined in profile but missing from teammate are added with empty value.
- * - This means: define once in your profile, all teammates inherit the field names.
- */
-function syncProfileCustomVarsToTeammate(existingTmVars) {
-  const profileVars = appState.profile.customVariables || [];
-  const merged = [...(existingTmVars || [])];
-
-  profileVars.forEach(pv => {
-    if (!pv.name || !pv.name.trim()) return;
-    const alreadyExists = merged.some(
-      tv => tv.name.trim().toLowerCase() === pv.name.trim().toLowerCase()
-    );
-    if (!alreadyExists) {
-      merged.push({
-        id: 'cv_sync_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
-        name: pv.name.trim(),
-        value: '' // teammate fills their own value
-      });
-    }
-  });
-
-  return merged;
-}
-
-// Render custom variable rows inside the teammate modal
-function renderTmCustomVars(list) {
-  const container = document.getElementById('tmCustomVarsContainer');
-  if (!container) return;
-
-  if (!list || list.length === 0) {
-    container.innerHTML = `<div style="font-size:10px;color:#64748b;font-style:italic;">No custom variables. Click "+ Add" to add Reg No, HackerRank ID, etc.</div>`;
-    return;
-  }
-
-  container.innerHTML = list.map(cv => `
-    <div class="custom-var-row" data-id="${escapeHTML(cv.id)}">
-      <input type="text" class="custom-var-name" value="${escapeHTML(cv.name)}" placeholder="Field Name (e.g. Reg No)">
-      <span class="custom-var-colon">:</span>
-      <input type="text" class="custom-var-val" value="${escapeHTML(cv.value)}" placeholder="Value">
-      <button type="button" class="btn-icon btn-icon-danger btn-del-tm-var" title="Delete">🗑️</button>
-    </div>
-  `).join('');
-
-  container.querySelectorAll('.btn-del-tm-var').forEach(btn => {
-    btn.addEventListener('click', () => {
-      btn.closest('.custom-var-row').remove();
-      if (container.querySelectorAll('.custom-var-row').length === 0) {
-        container.innerHTML = `<div style="font-size:10px;color:#64748b;font-style:italic;">No custom variables. Click "+ Add" to add Reg No, HackerRank ID, etc.</div>`;
-      }
-    });
-  });
-}
-
-function initTeammates() {
-  renderTeammates();
-
-  elements.teammateSearch.addEventListener('input', () => {
-    renderTeammates(elements.teammateSearch.value);
-  });
-
-  elements.addTeammateBtn.addEventListener('click', () => {
-    elements.teammateForm.reset();
-    document.getElementById('teammateId').value = '';
-    elements.teammateModalTitle.textContent = 'Add Teammate';
-    // Sync profile custom var names so they appear ready to fill for the new teammate
-    renderTmCustomVars(syncProfileCustomVarsToTeammate([]));
-    elements.teammateModal.classList.remove('hidden');
-  });
-
-  elements.closeTeammateModal.addEventListener('click', () => {
-    elements.teammateModal.classList.add('hidden');
-  });
-
-  elements.cancelTeammateBtn.addEventListener('click', () => {
-    elements.teammateModal.classList.add('hidden');
-  });
-
-  // Sync profile custom vars manually inside teammate modal
-  const syncBtn = document.getElementById('syncTmCustomVarsBtn');
-  if (syncBtn) {
-    syncBtn.addEventListener('click', () => {
-      const container = document.getElementById('tmCustomVarsContainer');
-      const currentVars = [];
-      container.querySelectorAll('.custom-var-row').forEach(row => {
-        const nameInput = row.querySelector('.custom-var-name');
-        const valInput  = row.querySelector('.custom-var-val');
-        if (nameInput && nameInput.value.trim()) {
-          currentVars.push({
-            id: row.dataset.id || ('cv_' + Date.now()),
-            name: nameInput.value.trim(),
-            value: valInput ? valInput.value.trim() : ''
-          });
-        }
-      });
-      renderTmCustomVars(syncProfileCustomVarsToTeammate(currentVars));
-      showToast('Profile variable names synced!');
-    });
-  }
-
-  // Wire the + Add button for teammate custom vars
-  document.getElementById('addTmCustomVarBtn').addEventListener('click', () => {
-    const container = document.getElementById('tmCustomVarsContainer');
-    // Remove the placeholder text if present
-    const placeholder = container.querySelector('div[style]');
-    if (placeholder) placeholder.remove();
-
-    const row = document.createElement('div');
-    row.className = 'custom-var-row';
-    row.dataset.id = 'cv_' + Date.now();
-    row.innerHTML = `
-      <input type="text" class="custom-var-name" placeholder="Field Name (e.g. Reg No)">
-      <span class="custom-var-colon">:</span>
-      <input type="text" class="custom-var-val" placeholder="Value">
-      <button type="button" class="btn-icon btn-icon-danger btn-del-tm-var" title="Delete">🗑️</button>
-    `;
-    row.querySelector('.btn-del-tm-var').addEventListener('click', () => {
-      row.remove();
-      if (container.querySelectorAll('.custom-var-row').length === 0) {
-        container.innerHTML = `<div style="font-size:10px;color:#64748b;font-style:italic;">No custom variables. Click "+ Add" to add Reg No, HackerRank ID, etc.</div>`;
-      }
-    });
-    container.appendChild(row);
-    row.querySelector('.custom-var-name').focus();
-  });
-
-  elements.teammateForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(elements.teammateForm);
-    const id = formData.get('id') || ('tm_' + Date.now());
-    const teammate = { id };
-    for (let [key, val] of formData.entries()) {
-      if (key !== 'id') teammate[key] = val.trim();
-    }
-
-    // Collect custom variables from the modal
-    const tmCustomVars = [];
-    document.querySelectorAll('#tmCustomVarsContainer .custom-var-row').forEach(row => {
-      const nameInput = row.querySelector('.custom-var-name');
-      const valInput  = row.querySelector('.custom-var-val');
-      if (nameInput && valInput && nameInput.value.trim()) {
-        tmCustomVars.push({
-          id: row.dataset.id || ('cv_' + Date.now() + Math.random().toString(36).substring(2, 6)),
-          name: nameInput.value.trim(),
-          value: valInput.value.trim()
-        });
-      }
-    });
-    teammate.customVariables = tmCustomVars;
-
-    const existingIndex = appState.teammates.findIndex(t => t.id === id);
-    if (existingIndex >= 0) {
-      teammate.squadPos = appState.teammates[existingIndex].squadPos;
-      appState.teammates[existingIndex] = teammate;
-    } else {
-      teammate.squadPos = null;
-      appState.teammates.push(teammate);
-    }
-
-    await Storage.set({ teammates: appState.teammates });
-    updateBadgeCounts();
-    renderTeammates();
-    elements.teammateModal.classList.add('hidden');
-    showToast('Teammate saved!');
-  });
-}
-
-function renderTeammates(filter = '') {
-  const query = filter.toLowerCase().trim();
-  const list = appState.teammates.filter(t => {
-    if (!query) return true;
-    return (
-      (t.name && t.name.toLowerCase().includes(query)) ||
-      (t.email && t.email.toLowerCase().includes(query)) ||
-      (t.college && t.college.toLowerCase().includes(query)) ||
-      (t.github && t.github.toLowerCase().includes(query))
-    );
-  });
-
-  if (list.length === 0) {
-    elements.teammatesList.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">👥</div>
-        <p>No teammates added yet.</p>
-        <p style="font-size:11px; margin-top:4px;">Add your hackathon buddies to store their GitHub, LinkedIn, and resume links for instant filling!</p>
-      </div>
-    `;
-    return;
-  }
-
-  elements.teammatesList.innerHTML = list.map(tm => {
-    const initials = tm.name ? tm.name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() : '??';
-    const squadBadge = tm.squadPos ? `<span class="badge" style="background:#3730a3;color:#c7d2fe;">Squad #${tm.squadPos}</span>` : '';
-
-    // Custom variable chips for this teammate
-    const customVarChips = (tm.customVariables && tm.customVariables.length > 0)
-      ? tm.customVariables.filter(cv => cv.name && cv.value).map(cv =>
-          `<button class="copy-chip" data-copy="${escapeHTML(cv.value)}" title="${escapeHTML(cv.name)}: ${escapeHTML(cv.value)}">🔖 ${escapeHTML(cv.name)}</button>`
-        ).join('')
-      : '';
-
-    return `
-      <div class="card teammate-card" data-id="${tm.id}">
-        <div class="card-top">
-          <div class="card-title-group">
-            <div class="card-avatar">${initials}</div>
-            <div>
-              <div class="card-title">${escapeHTML(tm.name)} ${squadBadge}</div>
-              <div class="card-meta">${escapeHTML(tm.college || tm.email || '')}</div>
-            </div>
-          </div>
-          <div class="card-actions">
-            <button class="btn-icon btn-edit-tm" data-id="${tm.id}" title="Edit">✏️</button>
-            <button class="btn-icon btn-delete-tm" data-id="${tm.id}" title="Delete">🗑️</button>
-          </div>
-        </div>
-
-        <div class="card-chips">
-          ${tm.secId ? `<button class="copy-chip" data-copy="${escapeHTML(tm.secId)}" title="College / SEC ID">🆔 ${escapeHTML(tm.secId)}</button>` : ''}
-          ${tm.github ? `<button class="copy-chip" data-copy="${escapeHTML(tm.github)}" title="${escapeHTML(tm.github)}">🐙 GitHub</button>` : ''}
-          ${tm.linkedin ? `<button class="copy-chip" data-copy="${escapeHTML(tm.linkedin)}" title="${escapeHTML(tm.linkedin)}">💼 LinkedIn</button>` : ''}
-          ${tm.resume ? `<button class="copy-chip" data-copy="${escapeHTML(tm.resume)}" title="${escapeHTML(tm.resume)}">📄 Resume</button>` : ''}
-          ${tm.email ? `<button class="copy-chip" data-copy="${escapeHTML(tm.email)}" title="${escapeHTML(tm.email)}">✉️ Email</button>` : ''}
-          ${tm.phone ? `<button class="copy-chip" data-copy="${escapeHTML(tm.phone)}" title="${escapeHTML(tm.phone)}">📱 Phone</button>` : ''}
-          ${tm.discord ? `<button class="copy-chip" data-copy="${escapeHTML(tm.discord)}" title="${escapeHTML(tm.discord)}">💬 Discord</button>` : ''}
-          ${customVarChips}
-        </div>
-
-        <div class="squad-selector">
-          <span>Assign to Form:</span>
-          <button class="squad-btn ${!tm.squadPos ? 'active' : ''}" data-squad="0" data-id="${tm.id}">None</button>
-          <button class="squad-btn ${tm.squadPos === 1 ? 'active' : ''}" data-squad="1" data-id="${tm.id}">Teammate 1</button>
-          <button class="squad-btn ${tm.squadPos === 2 ? 'active' : ''}" data-squad="2" data-id="${tm.id}">Teammate 2</button>
-          <button class="squad-btn ${tm.squadPos === 3 ? 'active' : ''}" data-squad="3" data-id="${tm.id}">Teammate 3</button>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Attach event listeners to chips & buttons
-  elements.teammatesList.querySelectorAll('.copy-chip').forEach(chip => {
-    chip.addEventListener('click', () => {
-      copyToClipboard(chip.dataset.copy, chip.textContent.trim());
-    });
-  });
-
-  elements.teammatesList.querySelectorAll('.btn-edit-tm').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tm = appState.teammates.find(t => t.id === btn.dataset.id);
-      if (tm) openEditTeammateModal(tm);
-    });
-  });
-
-  elements.teammatesList.querySelectorAll('.btn-delete-tm').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (confirm('Are you sure you want to delete this teammate?')) {
-        appState.teammates = appState.teammates.filter(t => t.id !== btn.dataset.id);
-        await Storage.set({ teammates: appState.teammates });
-        updateBadgeCounts();
-        renderTeammates(elements.teammateSearch.value);
-        showToast('Teammate removed');
-      }
-    });
-  });
-
-  elements.teammatesList.querySelectorAll('.squad-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.id;
-      const squadNum = parseInt(btn.dataset.squad, 10);
-
-      // If assigning a position (1, 2, 3), unassign anyone else who had that pos
-      if (squadNum > 0) {
-        appState.teammates.forEach(t => {
-          if (t.squadPos === squadNum) t.squadPos = null;
-        });
-      }
-
-      const target = appState.teammates.find(t => t.id === id);
-      if (target) {
-        target.squadPos = squadNum === 0 ? null : squadNum;
-      }
-
-      await Storage.set({ teammates: appState.teammates });
-      renderTeammates(elements.teammateSearch.value);
-      showToast(squadNum > 0 ? `Assigned as Teammate #${squadNum}` : 'Unassigned from squad');
-    });
-  });
-}
-
-function openEditTeammateModal(tm) {
-  document.getElementById('teammateId').value = tm.id;
-  document.getElementById('tmName').value = tm.name || '';
-  document.getElementById('tmEmail').value = tm.email || '';
-  document.getElementById('tmPhone').value = tm.phone || '';
-  document.getElementById('tmCollege').value = tm.college || '';
-  document.getElementById('tmSecId').value = tm.secId || '';
-  document.getElementById('tmGithub').value = tm.github || '';
-  document.getElementById('tmLinkedin').value = tm.linkedin || '';
-  document.getElementById('tmResume').value = tm.resume || '';
-  document.getElementById('tmDiscord').value = tm.discord || '';
-  document.getElementById('tmTshirt').value = tm.tshirt || '';
-  document.getElementById('tmDiet').value = tm.diet || 'None';
-
-  // Load teammate's saved custom variables (respects their list and any deletions)
-  // Only auto-merge from profile if tm.customVariables was completely undefined
-  const varsToRender = Array.isArray(tm.customVariables)
-    ? tm.customVariables
-    : syncProfileCustomVarsToTeammate([]);
-  renderTmCustomVars(varsToRender);
-
-  elements.teammateModalTitle.textContent = 'Edit Teammate';
-  elements.teammateModal.classList.remove('hidden');
-}
-
-// Snippets Tab
-function initSnippets() {
-  renderSnippets();
-
-  elements.addSnippetBtn.addEventListener('click', () => {
-    elements.snippetForm.reset();
-    document.getElementById('snippetId').value = '';
-    elements.snippetModalTitle.textContent = 'Add Snippet';
-    elements.snippetModal.classList.remove('hidden');
-  });
-
-  elements.closeSnippetModal.addEventListener('click', () => {
-    elements.snippetModal.classList.add('hidden');
-  });
-
-  elements.cancelSnippetBtn.addEventListener('click', () => {
-    elements.snippetModal.classList.add('hidden');
-  });
-
-  elements.snippetForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(elements.snippetForm);
-    const id = formData.get('id') || ('snip_' + Date.now());
-    const snippet = {
-      id,
-      title: formData.get('title').trim(),
-      category: formData.get('category'),
-      content: formData.get('content').trim()
-    };
-
-    const existingIndex = appState.snippets.findIndex(s => s.id === id);
-    if (existingIndex >= 0) {
-      appState.snippets[existingIndex] = snippet;
-    } else {
-      appState.snippets.push(snippet);
-    }
-
-    await Storage.set({ snippets: appState.snippets });
-    renderSnippets();
-    elements.snippetModal.classList.add('hidden');
-    showToast('Snippet saved!');
-  });
-}
-
-function renderSnippets() {
-  if (appState.snippets.length === 0) {
-    elements.snippetsList.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">📝</div>
-        <p>No answers saved yet.</p>
-        <p style="font-size:11px; margin-top:4px;">Save your standard hackathon essays, project pitches, and bios for 1-click copying!</p>
-      </div>
-    `;
-    return;
-  }
-
-  elements.snippetsList.innerHTML = appState.snippets.map(s => {
-    return `
-      <div class="card snippet-card" data-id="${s.id}">
-        <div class="card-top">
-          <div>
-            <span class="badge" style="background:#242f45;color:#94a3b8;margin-right:6px;">${escapeHTML(s.category)}</span>
-            <strong class="card-title">${escapeHTML(s.title)}</strong>
-          </div>
-          <div class="card-actions">
-            <button class="btn-icon btn-copy-snip" data-id="${s.id}" title="Copy Answer">📋</button>
-            <button class="btn-icon btn-delete-snip" data-id="${s.id}" title="Delete">🗑️</button>
-          </div>
-        </div>
-        <div class="card-text">${escapeHTML(s.content)}</div>
-      </div>
-    `;
-  }).join('');
-
-  elements.snippetsList.querySelectorAll('.btn-copy-snip').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const snip = appState.snippets.find(s => s.id === btn.dataset.id);
-      if (snip) copyToClipboard(snip.content, snip.title);
-    });
-  });
-
-  elements.snippetsList.querySelectorAll('.snippet-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const snip = appState.snippets.find(s => s.id === card.dataset.id);
-      if (snip) copyToClipboard(snip.content, snip.title);
-    });
-  });
-
-  elements.snippetsList.querySelectorAll('.btn-delete-snip').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (confirm('Delete this snippet?')) {
-        appState.snippets = appState.snippets.filter(s => s.id !== btn.dataset.id);
-        await Storage.set({ snippets: appState.snippets });
-        renderSnippets();
-        showToast('Snippet deleted');
-      }
-    });
-  });
-}
-
-// Application Tracker Tab
-function initTracker() {
-  renderTracker();
-
-  elements.statusFilter.addEventListener('change', () => {
-    renderTracker(elements.statusFilter.value);
-  });
-
-  elements.addAppBtn.addEventListener('click', () => {
-    elements.trackerForm.reset();
-    document.getElementById('appId').value = '';
-    document.getElementById('appDate').value = new Date().toISOString().split('T')[0];
-    elements.trackerModalTitle.textContent = 'Log Hackathon Application';
-    elements.trackerModal.classList.remove('hidden');
-  });
-
-  elements.closeTrackerModal.addEventListener('click', () => {
-    elements.trackerModal.classList.add('hidden');
-  });
-
-  elements.cancelTrackerBtn.addEventListener('click', () => {
-    elements.trackerModal.classList.add('hidden');
-  });
-
-  elements.trackerForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(elements.trackerForm);
-    const id = formData.get('id') || ('app_' + Date.now());
-    const entry = {
-      id,
-      eventName: formData.get('eventName').trim(),
-      eventUrl: formData.get('eventUrl').trim(),
-      appliedDate: formData.get('appliedDate'),
-      status: formData.get('status'),
-      squad: formData.get('squad').trim(),
-      notes: formData.get('notes').trim()
-    };
-
-    const existingIndex = appState.tracker.findIndex(a => a.id === id);
-    if (existingIndex >= 0) {
-      appState.tracker[existingIndex] = entry;
-    } else {
-      appState.tracker.unshift(entry);
-    }
-
-    await Storage.set({ tracker: appState.tracker });
-    updateBadgeCounts();
-    renderTracker(elements.statusFilter.value);
-    elements.trackerModal.classList.add('hidden');
-    showToast('Application logged!');
-  });
-}
-
-function renderTracker(filter = 'ALL') {
-  const list = appState.tracker.filter(item => {
-    if (filter === 'ALL') return true;
-    return item.status === filter;
-  });
-
-  if (list.length === 0) {
-    elements.trackerList.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">🏆</div>
-        <p>No applications logged yet.</p>
-        <p style="font-size:11px; margin-top:4px;">Click "Log Current Event" on any hackathon page to keep a permanent record!</p>
-      </div>
-    `;
-    return;
-  }
-
-  elements.trackerList.innerHTML = list.map(item => {
-    const statusClass = `status-${item.status.toLowerCase()}`;
-    return `
-      <div class="card" data-id="${item.id}">
-        <div class="card-top">
-          <div>
-            <span class="status-badge ${statusClass}">${escapeHTML(item.status)}</span>
-            <strong class="card-title" style="margin-left:6px;">${escapeHTML(item.eventName)}</strong>
-          </div>
-          <div class="card-actions">
-            <button class="btn-icon btn-edit-app" data-id="${item.id}" title="Edit">✏️</button>
-            <button class="btn-icon btn-delete-app" data-id="${item.id}" title="Delete">🗑️</button>
-          </div>
-        </div>
-
-        <div style="font-size:11px; color:#94a3b8; display:flex; flex-direction:column; gap:3px; margin-top:4px;">
-          ${item.appliedDate ? `<div>📅 Applied: <strong>${escapeHTML(item.appliedDate)}</strong></div>` : ''}
-          ${item.squad ? `<div>👥 Squad: <strong>${escapeHTML(item.squad)}</strong></div>` : ''}
-          ${item.eventUrl ? `<div>🔗 <a href="${escapeHTML(item.eventUrl)}" target="_blank" style="color:#818cf8;text-decoration:none;">${escapeHTML(item.eventUrl)}</a></div>` : ''}
-          ${item.notes ? `<div style="background:#151d2c;padding:6px 8px;border-radius:4px;margin-top:4px;color:#cbd5e1;">${escapeHTML(item.notes)}</div>` : ''}
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  elements.trackerList.querySelectorAll('.btn-edit-app').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const item = appState.tracker.find(a => a.id === btn.dataset.id);
-      if (item) {
-        document.getElementById('appId').value = item.id;
-        document.getElementById('appEventName').value = item.eventName || '';
-        document.getElementById('appEventUrl').value = item.eventUrl || '';
-        document.getElementById('appDate').value = item.appliedDate || '';
-        document.getElementById('appStatus').value = item.status || 'Applied';
-        document.getElementById('appSquad').value = item.squad || '';
-        document.getElementById('appNotes').value = item.notes || '';
-
-        elements.trackerModalTitle.textContent = 'Edit Application Entry';
-        elements.trackerModal.classList.remove('hidden');
-      }
-    });
-  });
-
-  elements.trackerList.querySelectorAll('.btn-delete-app').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (confirm('Delete this application entry?')) {
-        appState.tracker = appState.tracker.filter(a => a.id !== btn.dataset.id);
-        await Storage.set({ tracker: appState.tracker });
-        updateBadgeCounts();
-        renderTracker(elements.statusFilter.value);
-        showToast('Entry deleted');
-      }
-    });
-  });
-}
-
-// Quick Log Modal for active tab
-async function openTrackerModalForCurrentTab() {
-  let title = 'Hackathon Application';
-  let url = '';
-
-  if (typeof ext !== 'undefined' && ext.tabs && ext.tabs.query) {
-    const tabs = await ext.tabs.query({ active: true, currentWindow: true });
-    if (tabs && tabs[0]) {
-      url = tabs[0].url || '';
-      title = (tabs[0].title || 'Hackathon').split(' - ')[0].split(' | ')[0].trim();
-    }
-  }
-
-  // Active squad names
-  const activeSquadNames = appState.teammates
-    .filter(t => t.squadPos)
-    .sort((a, b) => a.squadPos - b.squadPos)
-    .map(t => t.name)
-    .join(', ');
-
-  elements.trackerForm.reset();
-  document.getElementById('appId').value = '';
-  document.getElementById('appEventName').value = title;
-  document.getElementById('appEventUrl').value = url;
-  document.getElementById('appDate').value = new Date().toISOString().split('T')[0];
-  document.getElementById('appStatus').value = 'Applied';
-  document.getElementById('appSquad').value = activeSquadNames ? (appState.profile.fullName ? `${appState.profile.fullName}, ${activeSquadNames}` : activeSquadNames) : (appState.profile.fullName || 'Solo');
-
-  // Switch to tracker tab
-  document.querySelector('[data-tab="tracker"]').click();
-  elements.trackerModalTitle.textContent = 'Log Hackathon Application';
-  elements.trackerModal.classList.remove('hidden');
-}
-
-// Trigger Autofill in active page
-async function triggerPageAutofill() {
-  if (typeof ext !== 'undefined' && ext.tabs && ext.tabs.query) {
-    try {
-      const tabs = await ext.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (!tab || !tab.id) {
-        showToast('No active tab found', '⚠️');
-        return;
-      }
-
-      elements.pageDetectBadge.textContent = 'Autofilling...';
-      elements.pageDetectBadge.className = 'badge badge-detecting';
-
-      // Firefox browser.tabs.sendMessage returns a Promise; Chrome uses callbacks.
-      // We wrap the callback style for Chrome and await the Promise for Firefox.
-      const sendMsg = () => new Promise((resolve, reject) => {
-        const isFirefox = typeof browser !== 'undefined';
-        if (isFirefox) {
-          ext.tabs.sendMessage(tab.id, {
-            action: 'AUTOFILL_PAGE',
-            payload: { profile: appState.profile, teammates: appState.teammates }
-          }).then(resolve).catch(reject);
-        } else {
-          ext.tabs.sendMessage(tab.id, {
-            action: 'AUTOFILL_PAGE',
-            payload: { profile: appState.profile, teammates: appState.teammates }
-          }, (response) => {
-            if (ext.runtime.lastError) return reject(ext.runtime.lastError);
-            resolve(response);
-          });
-        }
-      });
-
-      try {
-        const response = await sendMsg();
-        if (response && response.filledCount > 0) {
-          showToast(`Filled ${response.filledCount} fields!`, '⚡');
-          elements.pageDetectBadge.textContent = `⚡ Filled ${response.filledCount} fields`;
-          elements.pageDetectBadge.className = 'badge badge-ready';
-        } else {
-          showToast('No matching form inputs found on this page', 'ℹ️');
-          elements.pageDetectBadge.textContent = '0 matches';
-          elements.pageDetectBadge.className = 'badge badge-detecting';
-        }
-      } catch {
-        showToast('Could not autofill: Open a web form first', '⚠️');
-        elements.pageDetectBadge.textContent = 'No form found';
-        elements.pageDetectBadge.className = 'badge badge-detecting';
-      }
-    } catch (err) {
-      showToast('Error communicating with tab', '❌');
-    }
-  } else {
-    showToast('Autofill ready! (Load as unpacked extension to test on live forms)');
-  }
-}
-
-// Check active tab for forms
-async function checkCurrentPageForms() {
-  if (typeof ext !== 'undefined' && ext.tabs && ext.tabs.query) {
-    try {
-      const tabs = await ext.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      // Skip internal browser pages
-      if (!tab || !tab.id || !tab.url ||
-          tab.url.startsWith('chrome://') ||
-          tab.url.startsWith('about:') ||
-          tab.url.startsWith('moz-extension://')) {
-        elements.pageDetectBadge.textContent = 'Ready';
-        return;
-      }
-
-      const isFirefox = typeof browser !== 'undefined';
-      const sendCheck = () => new Promise((resolve, reject) => {
-        if (isFirefox) {
-          ext.tabs.sendMessage(tab.id, { action: 'CHECK_FORMS' }).then(resolve).catch(reject);
-        } else {
-          ext.tabs.sendMessage(tab.id, { action: 'CHECK_FORMS' }, (response) => {
-            if (ext.runtime.lastError) return reject(ext.runtime.lastError);
-            resolve(response);
-          });
-        }
-      });
-
-      try {
-        const response = await sendCheck();
-        if (response && response.hasForm) {
-          elements.pageDetectBadge.textContent = `Form Ready (${response.inputCount} inputs)`;
-          elements.pageDetectBadge.className = 'badge badge-ready';
-        } else {
-          elements.pageDetectBadge.textContent = 'No form detected';
-        }
-      } catch {
-        elements.pageDetectBadge.textContent = 'Idle';
-      }
-    } catch (e) {}
-  }
-}
-
-// Settings & Backup
-function initSettings() {
-  // Export
-  elements.exportDataBtn.addEventListener('click', () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(appState, null, 2));
-    const dlAnchor = document.createElement('a');
-    dlAnchor.setAttribute("href", dataStr);
-    dlAnchor.setAttribute("download", `hackfill_backup_${new Date().toISOString().split('T')[0]}.json`);
-    dlAnchor.click();
-    showToast('Data exported successfully!');
-  });
-
-  // Import
-  elements.importDataInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const imported = JSON.parse(event.target.result);
-        if (imported) {
-          appState.profile = imported.profile || {};
-          appState.teammates = imported.teammates || [];
-          appState.snippets = imported.snippets || [];
-          appState.tracker = imported.tracker || [];
-
-          await Storage.set(appState);
-          initProfile();
-          renderTeammates();
-          renderSnippets();
-          renderTracker();
-          updateBadgeCounts();
-          showToast('Data imported successfully!');
-        }
-      } catch (err) {
-        showToast('Invalid JSON file', '❌');
-      }
-    };
-    reader.readAsText(file);
-  });
-
-  // Load Demo Data
-  elements.loadDemoBtn.addEventListener('click', async () => {
-    if (confirm('Load demo profile, teammates, and answers?')) {
-      appState = JSON.parse(JSON.stringify(DEMO_DATA));
-      await Storage.set(appState);
-      initProfile();
-      renderTeammates();
-      renderSnippets();
-      renderTracker();
-      updateBadgeCounts();
-      showToast('Demo data loaded! Try clicking Autofill', '✨');
-    }
-  });
-
-  // Clear All
-  elements.clearDataBtn.addEventListener('click', async () => {
-    if (confirm('Are you sure you want to clear all data? This cannot be undone.')) {
-      appState = { profile: {}, teammates: [], snippets: [], tracker: [] };
-      await Storage.set(appState);
-      initProfile();
-      renderTeammates();
-      renderSnippets();
-      renderTracker();
-      updateBadgeCounts();
-      showToast('All data cleared', '🗑️');
-    }
-  });
+  elements.toast._timer = setTimeout(() => elements.toast.classList.add('hidden'), 2200);
 }
 
 function escapeHTML(str) {
-  if (!str) return '';
-  return String(str)
+  return String(str || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+async function copyToClipboard(text, label) {
+  if (!text) { showToast('Nothing to copy'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  showToast(label ? 'Copied ' + label : 'Copied');
+}
+
+function sendTab(tabId, message) {
+  return new Promise((resolve, reject) => {
+    if (!ext || !ext.tabs || !ext.tabs.sendMessage) {
+      reject(new Error('No tab API'));
+      return;
+    }
+    let done = false;
+    const finish = (err, res) => {
+      if (done) return;
+      done = true;
+      if (err) reject(err);
+      else resolve(res);
+    };
+    try {
+      const ret = ext.tabs.sendMessage(tabId, message, (res) => {
+        const err = ext.runtime && ext.runtime.lastError;
+        finish(err ? new Error(err.message) : null, res);
+      });
+      if (ret && typeof ret.then === 'function') ret.then((res) => finish(null, res), (err) => finish(err));
+    } catch (err) {
+      finish(err);
+    }
+  });
+}
+
+function switchTab(name) {
+  elements.navTabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+  elements.tabPanes.forEach((p) => p.classList.toggle('active', p.id === 'tab-' + name));
+}
+
+function initNavigation() {
+  elements.navTabs.forEach((tab) => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+  elements.quickAutofillBtn.addEventListener('click', triggerPageAutofill);
+  elements.quickLogBtn.addEventListener('click', openTrackerModalForCurrentTab);
+  if (elements.popoutBtn && !location.search.includes('standalone=true')) {
+    elements.popoutBtn.addEventListener('click', () => {
+      const url = ext && ext.runtime ? ext.runtime.getURL('popup/popup.html?standalone=true') : 'popup.html?standalone=true';
+      if (ext && ext.windows && ext.windows.create) {
+        ext.windows.create({ url, type: 'popup', width: 480, height: 760 });
+        window.close();
+      } else {
+        window.open(url, 'HackFill', 'width=480,height=760');
+      }
+    });
+  }
+}
+
+function setSaveStatus(mode) {
+  elements.autoSaveStatus.className = 'save-state ' + mode;
+  elements.autoSaveText.textContent = mode === 'saving' ? 'Saving' : 'Saved';
+}
+
+function triggerAutoSave() {
+  setSaveStatus('saving');
+  clearTimeout(profileSaveTimer);
+  profileSaveTimer = setTimeout(() => saveProfileImmediate(false), 200);
+}
+
+async function saveProfileImmediate(notify) {
+  clearTimeout(profileSaveTimer);
+  const profile = { ...appState.profile };
+  const data = new FormData(elements.profileForm);
+  for (const [key, val] of data.entries()) {
+    if (key !== 'customVarName' && key !== 'customVarValue') profile[key] = String(val).trim();
+  }
+  const customVars = [];
+  elements.customVarsContainer.querySelectorAll('.var-row').forEach((row) => {
+    const name = row.querySelector('.custom-var-name').value.trim();
+    const value = row.querySelector('.custom-var-val').value.trim();
+    if (!name) return;
+    customVars.push({ id: row.dataset.id || ('cv_' + Date.now()), name, value });
+  });
+  profile.customVariables = customVars;
+  appState.profile = profile;
+  await Storage.set({ profile });
+  setSaveStatus('saved');
+  if (notify) showToast('Profile saved');
+  renderLineup();
+}
+
+function renderCustomVariables() {
+  const list = appState.profile.customVariables || [];
+  if (!list.length) {
+    elements.customVarsContainer.innerHTML = '<p class="hint">No extra fields yet.</p>';
+    return;
+  }
+  elements.customVarsContainer.innerHTML = list.map((cv) => `
+    <div class="var-row" data-id="${escapeHTML(cv.id)}">
+      <input class="custom-var-name" type="text" value="${escapeHTML(cv.name)}" placeholder="Field name">
+      <input class="custom-var-val" type="text" value="${escapeHTML(cv.value)}" placeholder="Value">
+      <button class="icon-btn copy-var" type="button" title="Copy">Copy</button>
+      <button class="icon-btn danger del-var" type="button" title="Remove">Del</button>
+    </div>
+  `).join('');
+}
+
+function fillProfileForm() {
+  ['fullName', 'email', 'phone', 'location', 'github', 'linkedin', 'portfolio', 'resume', 'discord', 'devfolio', 'college', 'degree', 'gradYear', 'secId', 'tshirt', 'diet', 'emergency'].forEach((key) => {
+    const input = $(key);
+    if (input) input.value = appState.profile[key] || (key === 'diet' ? 'None' : '');
+  });
+  renderCustomVariables();
+}
+
+function initProfile() {
+  fillProfileForm();
+  if (profileBound) return;
+  profileBound = true;
+  elements.profileForm.addEventListener('input', triggerAutoSave);
+  elements.profileForm.addEventListener('change', triggerAutoSave);
+  elements.profileForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await saveProfileImmediate(true);
+  });
+  elements.addCustomVarBtn.addEventListener('click', () => {
+    if (!appState.profile.customVariables) appState.profile.customVariables = [];
+    appState.profile.customVariables.push({ id: 'cv_' + Date.now(), name: '', value: '' });
+    renderCustomVariables();
+    const rows = elements.customVarsContainer.querySelectorAll('.var-row');
+    const last = rows[rows.length - 1];
+    if (last) last.querySelector('.custom-var-name').focus();
+  });
+  elements.customVarsContainer.addEventListener('click', async (e) => {
+    const row = e.target.closest('.var-row');
+    if (!row) return;
+    if (e.target.closest('.copy-var')) {
+      copyToClipboard(row.querySelector('.custom-var-val').value, row.querySelector('.custom-var-name').value);
+    }
+    if (e.target.closest('.del-var')) {
+      row.remove();
+      await saveProfileImmediate(false);
+      renderCustomVariables();
+    }
+  });
+  document.querySelectorAll('.copy-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const input = $(btn.dataset.target);
+      copyToClipboard(input && input.value, btn.dataset.target);
+    });
+  });
+}
+
+function slotLabel(index) {
+  return 'Teammate ' + (index + 1);
+}
+
+function personById(id) {
+  return appState.teammates.find((t) => t.id === id) || null;
+}
+
+async function commitTeam() {
+  appState.team = normalizeTeam(appState.team, appState.teammates);
+  syncSquadPos();
+  await Storage.set({ team: appState.team, teammates: appState.teammates });
+  renderSquad(elements.teammateSearch.value);
+}
+
+function renderSizeBar() {
+  let html = '';
+  for (let size = 1; size <= MAX_TEAM; size++) {
+    html += `<button type="button" class="size-btn${appState.team.size === size ? ' active' : ''}" data-size="${size}">${size}</button>`;
+  }
+  elements.teamSizeBar.innerHTML = html;
+}
+
+function renderLineup() {
+  const you = appState.profile.fullName || 'Your profile';
+  let html = `
+    <div class="slot you">
+      <div class="slot-no">01</div>
+      <div>
+        <div class="slot-label">You · Member 1 · Lead</div>
+        <strong>${escapeHTML(you)}</strong>
+      </div>
+    </div>`;
+  appState.team.slots.forEach((id, index) => {
+    const options = ['<option value="">Empty slot</option>'].concat(appState.teammates.map((t) => {
+      const taken = appState.team.slots.some((slotId, i) => slotId === t.id && i !== index);
+      const note = taken ? ' (in another slot)' : '';
+      return `<option value="${escapeHTML(t.id)}"${t.id === id ? ' selected' : ''}>${escapeHTML(t.name || 'Unnamed')}${note}</option>`;
+    }));
+    html += `
+      <div class="slot">
+        <div class="slot-no">${String(index + 2).padStart(2, '0')}</div>
+        <div>
+          <div class="slot-label">${slotLabel(index)} · Member ${index + 2}</div>
+          <select data-slot="${index}">${options.join('')}</select>
+        </div>
+      </div>`;
+  });
+  elements.lineup.innerHTML = html;
+}
+
+function initials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  return parts.slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+}
+
+function renderVault(filter) {
+  const query = String(filter || '').trim().toLowerCase();
+  const list = appState.teammates.filter((t) => {
+    if (!query) return true;
+    return [t.name, t.email, t.college, t.github, t.discord, t.secId].some((v) => String(v || '').toLowerCase().includes(query));
+  });
+  if (!appState.teammates.length) {
+    elements.teammatesList.innerHTML = '<div class="empty"><strong>No one saved yet</strong>Add the people you actually apply with. Then drop them into the lineup.</div>';
+    return;
+  }
+  if (!list.length) {
+    elements.teammatesList.innerHTML = '<div class="empty"><strong>No matches</strong>Try another name, college, or email.</div>';
+    return;
+  }
+  elements.teammatesList.innerHTML = list.map((tm) => {
+    const slot = appState.team.slots.indexOf(tm.id);
+    const chips = [
+      ['ID', tm.secId], ['GitHub', tm.github], ['LinkedIn', tm.linkedin], ['Resume', tm.resume],
+      ['Email', tm.email], ['Phone', tm.phone], ['Discord', tm.discord]
+    ].filter((pair) => pair[1]);
+    (tm.customVariables || []).forEach((cv) => { if (cv.name && cv.value) chips.push([cv.name, cv.value]); });
+    return `
+      <article class="card" data-id="${escapeHTML(tm.id)}">
+        <div class="card-top">
+          <div class="who">
+            <div class="avatar">${escapeHTML(initials(tm.name))}</div>
+            <div>
+              <div class="card-title">${escapeHTML(tm.name || 'Unnamed')}${slot >= 0 ? `<span class="slot-tag">${slotLabel(slot)}</span>` : ''}</div>
+              <div class="card-meta">${escapeHTML(tm.college || tm.email || 'No college yet')}</div>
+            </div>
+          </div>
+          <div>
+            <button class="icon-btn edit-tm" type="button" title="Edit">Edit</button>
+            <button class="icon-btn danger delete-tm" type="button" title="Delete">Del</button>
+          </div>
+        </div>
+        <div class="chips">${chips.map(([label, value]) => `<button type="button" class="chip" data-copy="${escapeHTML(value)}">${escapeHTML(label)}</button>`).join('')}</div>
+      </article>`;
+  }).join('');
+}
+
+function renderSquad(filter) {
+  renderSizeBar();
+  renderLineup();
+  renderVault(filter);
+}
+
+function readCustomVarRows(container) {
+  const vars = [];
+  container.querySelectorAll('.var-row').forEach((row) => {
+    const name = row.querySelector('.custom-var-name').value.trim();
+    const value = row.querySelector('.custom-var-val').value.trim();
+    if (!name) return;
+    vars.push({ id: row.dataset.id || ('cv_' + Date.now()), name, value });
+  });
+  return vars;
+}
+
+function renderTmCustomVars(list) {
+  const container = $('tmCustomVarsContainer');
+  if (!list || !list.length) {
+    container.innerHTML = '<p class="hint">No extra fields for this person.</p>';
+    return;
+  }
+  container.innerHTML = list.map((cv) => `
+    <div class="var-row" data-id="${escapeHTML(cv.id)}">
+      <input class="custom-var-name" type="text" value="${escapeHTML(cv.name)}" placeholder="Field name">
+      <input class="custom-var-val" type="text" value="${escapeHTML(cv.value)}" placeholder="Their value">
+      <span></span>
+      <button class="icon-btn danger del-tm-var" type="button">Del</button>
+    </div>
+  `).join('');
+}
+
+function syncNamesOnto(existing) {
+  const merged = (existing || []).map((v) => ({ ...v }));
+  (appState.profile.customVariables || []).forEach((pv) => {
+    const name = String(pv.name || '').trim();
+    if (!name) return;
+    const has = merged.some((tv) => tv.name.trim().toLowerCase() === name.toLowerCase());
+    if (!has) merged.push({ id: 'cv_' + Date.now() + Math.random().toString(36).slice(2, 5), name, value: '' });
+  });
+  return merged;
+}
+
+function readTeammateForm() {
+  const data = new FormData(elements.teammateForm);
+  const teammate = { id: data.get('id') || '' };
+  for (const [key, val] of data.entries()) {
+    if (key !== 'id') teammate[key] = String(val).trim();
+  }
+  teammate.customVariables = readCustomVarRows($('tmCustomVarsContainer'));
+  const prev = personById(teammate.id);
+  teammate.squadPos = prev ? prev.squadPos : null;
+  return teammate;
+}
+
+async function persistTeammateFromForm() {
+  const teammate = readTeammateForm();
+  if (!teammate.name) return false;
+  if (!teammate.id) {
+    teammate.id = 'tm_' + Date.now();
+    $('teammateId').value = teammate.id;
+    teammateCreatedId = teammate.id;
+    appState.teammates.push(teammate);
+  } else {
+    const index = appState.teammates.findIndex((t) => t.id === teammate.id);
+    if (index >= 0) appState.teammates[index] = teammate;
+    else appState.teammates.push(teammate);
+  }
+  syncSquadPos();
+  await Storage.set({ teammates: appState.teammates, team: appState.team });
+  updateBadgeCounts();
+  renderSquad(elements.teammateSearch.value);
+  if (elements.tmSaveState) elements.tmSaveState.textContent = 'Saved';
+  return true;
+}
+
+function scheduleTeammateSave() {
+  if (elements.tmSaveState) elements.tmSaveState.textContent = 'Saving';
+  clearTimeout(teammateSaveTimer);
+  teammateSaveTimer = setTimeout(() => persistTeammateFromForm(), 180);
+}
+
+function openTeammateModal(tm) {
+  teammateCreatedId = null;
+  teammateSnapshot = tm ? JSON.parse(JSON.stringify(tm)) : null;
+  elements.teammateForm.reset();
+  $('teammateId').value = tm ? tm.id : '';
+  const fields = {
+    tmName: 'name', tmEmail: 'email', tmPhone: 'phone', tmLocation: 'location', tmCollege: 'college',
+    tmDegree: 'degree', tmGradYear: 'gradYear', tmSecId: 'secId', tmGithub: 'github', tmLinkedin: 'linkedin',
+    tmPortfolio: 'portfolio', tmResume: 'resume', tmDiscord: 'discord', tmTshirt: 'tshirt', tmDiet: 'diet'
+  };
+  Object.entries(fields).forEach(([id, key]) => {
+    const input = $(id);
+    if (!input) return;
+    input.value = tm && tm[key] ? tm[key] : (key === 'diet' ? 'None' : '');
+  });
+  const vars = tm && Array.isArray(tm.customVariables) ? tm.customVariables : syncNamesOnto([]);
+  renderTmCustomVars(vars);
+  elements.teammateModalTitle.textContent = tm ? 'Edit teammate' : 'Add teammate';
+  if (elements.tmSaveState) elements.tmSaveState.textContent = 'Saves as you type';
+  elements.teammateModal.classList.remove('hidden');
+  $('tmName').focus();
+}
+
+async function discardTeammateModal() {
+  clearTimeout(teammateSaveTimer);
+  if (teammateSnapshot) {
+    const index = appState.teammates.findIndex((t) => t.id === teammateSnapshot.id);
+    if (index >= 0) appState.teammates[index] = teammateSnapshot;
+    else appState.teammates.push(teammateSnapshot);
+  } else if (teammateCreatedId) {
+    appState.teammates = appState.teammates.filter((t) => t.id !== teammateCreatedId);
+    appState.team.slots = appState.team.slots.map((id) => id === teammateCreatedId ? null : id);
+  }
+  syncSquadPos();
+  await Storage.set({ teammates: appState.teammates, team: appState.team });
+  updateBadgeCounts();
+  renderSquad(elements.teammateSearch.value);
+  elements.teammateModal.classList.add('hidden');
+}
+
+function initSquad() {
+  renderSquad();
+  elements.teamSizeBar.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-size]');
+    if (!btn) return;
+    const size = clampSize(btn.dataset.size);
+    const slots = [];
+    for (let i = 0; i < size - 1; i++) slots.push(appState.team.slots[i] || null);
+    appState.team = { size, slots };
+    await commitTeam();
+    showToast(size === 1 ? 'Solo. Only your details will fill.' : 'Team size is ' + size);
+  });
+  elements.lineup.addEventListener('change', async (e) => {
+    const sel = e.target.closest('select[data-slot]');
+    if (!sel) return;
+    const index = Number(sel.dataset.slot);
+    const id = sel.value || null;
+    const slots = appState.team.slots.slice();
+    if (id) {
+      slots.forEach((slotId, i) => { if (i !== index && slotId === id) slots[i] = null; });
+    }
+    slots[index] = id;
+    appState.team.slots = slots;
+    await commitTeam();
+    showToast(id ? 'Lineup updated' : 'Slot cleared');
+  });
+  elements.teammateSearch.addEventListener('input', () => renderVault(elements.teammateSearch.value));
+  elements.addTeammateBtn.addEventListener('click', () => openTeammateModal(null));
+  elements.closeTeammateModal.addEventListener('click', () => {
+    persistTeammateFromForm();
+    elements.teammateModal.classList.add('hidden');
+  });
+  elements.cancelTeammateBtn.addEventListener('click', discardTeammateModal);
+  elements.teammateForm.addEventListener('input', scheduleTeammateSave);
+  elements.teammateForm.addEventListener('change', scheduleTeammateSave);
+  elements.teammateForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const ok = await persistTeammateFromForm();
+    if (!ok) { showToast('Add a name first'); return; }
+    elements.teammateModal.classList.add('hidden');
+    showToast('Teammate saved');
+  });
+  $('syncTmCustomVarsBtn').addEventListener('click', () => {
+    renderTmCustomVars(syncNamesOnto(readCustomVarRows($('tmCustomVarsContainer'))));
+    scheduleTeammateSave();
+  });
+  $('addTmCustomVarBtn').addEventListener('click', () => {
+    const current = readCustomVarRows($('tmCustomVarsContainer'));
+    current.push({ id: 'cv_' + Date.now(), name: '', value: '' });
+    renderTmCustomVars(current);
+    const rows = $('tmCustomVarsContainer').querySelectorAll('.var-row');
+    rows[rows.length - 1].querySelector('.custom-var-name').focus();
+  });
+  $('tmCustomVarsContainer').addEventListener('click', (e) => {
+    if (!e.target.closest('.del-tm-var')) return;
+    e.target.closest('.var-row').remove();
+    if (!$('tmCustomVarsContainer').querySelector('.var-row')) {
+      $('tmCustomVarsContainer').innerHTML = '<p class="hint">No extra fields for this person.</p>';
+    }
+    scheduleTeammateSave();
+  });
+  elements.teammatesList.addEventListener('click', async (e) => {
+    const card = e.target.closest('.card');
+    if (!card) return;
+    const id = card.dataset.id;
+    if (e.target.closest('.chip')) {
+      copyToClipboard(e.target.closest('.chip').dataset.copy, e.target.closest('.chip').textContent);
+      return;
+    }
+    if (e.target.closest('.edit-tm')) {
+      const tm = personById(id);
+      if (tm) openTeammateModal(tm);
+      return;
+    }
+    if (e.target.closest('.delete-tm')) {
+      const tm = personById(id);
+      if (!tm || !confirm('Remove ' + (tm.name || 'this teammate') + '?')) return;
+      appState.teammates = appState.teammates.filter((t) => t.id !== id);
+      appState.team.slots = appState.team.slots.map((slotId) => slotId === id ? null : slotId);
+      await commitTeam();
+      updateBadgeCounts();
+      showToast('Teammate removed');
+    }
+  });
+}
+
+function renderSnippets() {
+  if (!appState.snippets.length) {
+    elements.snippetsList.innerHTML = '<div class="empty"><strong>No answers yet</strong>Save the paragraphs you paste into every application.</div>';
+    return;
+  }
+  elements.snippetsList.innerHTML = appState.snippets.map((s) => `
+    <article class="card snippet-card" data-id="${escapeHTML(s.id)}">
+      <div class="card-top">
+        <div>
+          <div class="cat">${escapeHTML(s.category || 'Custom')}</div>
+          <div class="card-title">${escapeHTML(s.title)}</div>
+        </div>
+        <div>
+          <button class="icon-btn edit-snip" type="button">Edit</button>
+          <button class="icon-btn danger delete-snip" type="button">Del</button>
+        </div>
+      </div>
+      <div class="snippet-body">${escapeHTML(s.content)}</div>
+    </article>
+  `).join('');
+}
+
+function openSnippetModal(snip) {
+  elements.snippetForm.reset();
+  $('snippetId').value = snip ? snip.id : '';
+  $('snipTitle').value = snip ? snip.title : '';
+  $('snipCategory').value = snip ? (snip.category || 'Custom') : 'Bio';
+  $('snipContent').value = snip ? snip.content : '';
+  elements.snippetModalTitle.textContent = snip ? 'Edit answer' : 'New answer';
+  elements.snippetModal.classList.remove('hidden');
+  $('snipTitle').focus();
+}
+
+function initSnippets() {
+  renderSnippets();
+  elements.addSnippetBtn.addEventListener('click', () => openSnippetModal(null));
+  elements.closeSnippetModal.addEventListener('click', () => elements.snippetModal.classList.add('hidden'));
+  elements.cancelSnippetBtn.addEventListener('click', () => elements.snippetModal.classList.add('hidden'));
+  elements.snippetForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = new FormData(elements.snippetForm);
+    const snippet = {
+      id: data.get('id') || ('snip_' + Date.now()),
+      title: String(data.get('title') || '').trim(),
+      category: data.get('category'),
+      content: String(data.get('content') || '').trim()
+    };
+    if (!snippet.title || !snippet.content) return;
+    const index = appState.snippets.findIndex((s) => s.id === snippet.id);
+    if (index >= 0) appState.snippets[index] = snippet;
+    else appState.snippets.push(snippet);
+    await Storage.set({ snippets: appState.snippets });
+    renderSnippets();
+    elements.snippetModal.classList.add('hidden');
+    showToast('Answer saved');
+  });
+  elements.snippetsList.addEventListener('click', async (e) => {
+    const card = e.target.closest('.snippet-card');
+    if (!card) return;
+    const snip = appState.snippets.find((s) => s.id === card.dataset.id);
+    if (!snip) return;
+    if (e.target.closest('.delete-snip')) {
+      e.stopPropagation();
+      if (!confirm('Delete this answer?')) return;
+      appState.snippets = appState.snippets.filter((s) => s.id !== snip.id);
+      await Storage.set({ snippets: appState.snippets });
+      renderSnippets();
+      return;
+    }
+    if (e.target.closest('.edit-snip')) {
+      openSnippetModal(snip);
+      return;
+    }
+    copyToClipboard(snip.content, snip.title);
+  });
+}
+
+function renderTracker(filter) {
+  const mode = filter || 'ALL';
+  const list = appState.tracker.filter((item) => mode === 'ALL' || item.status === mode);
+  if (!list.length) {
+    elements.trackerList.innerHTML = '<div class="empty"><strong>Nothing logged</strong>Use Log this event while you are on the registration page.</div>';
+    return;
+  }
+  elements.trackerList.innerHTML = list.map((item) => `
+    <article class="card" data-id="${escapeHTML(item.id)}">
+      <div class="card-top">
+        <div>
+          <span class="status status-${escapeHTML(String(item.status || 'applied').toLowerCase())}">${escapeHTML(item.status || 'Applied')}</span>
+          <strong>${escapeHTML(item.eventName)}</strong>
+        </div>
+        <div>
+          <button class="icon-btn edit-app" type="button">Edit</button>
+          <button class="icon-btn danger delete-app" type="button">Del</button>
+        </div>
+      </div>
+      <div class="note">
+        ${item.appliedDate ? `<div>${escapeHTML(item.appliedDate)}</div>` : ''}
+        ${item.squad ? `<div>${escapeHTML(item.squad)}</div>` : ''}
+        ${item.eventUrl ? `<div><a href="${escapeHTML(item.eventUrl)}" target="_blank" rel="noreferrer">${escapeHTML(item.eventUrl)}</a></div>` : ''}
+        ${item.notes ? `<div>${escapeHTML(item.notes)}</div>` : ''}
+      </div>
+    </article>
+  `).join('');
+}
+
+function openTrackerEditor(item) {
+  elements.trackerForm.reset();
+  $('appId').value = item ? item.id : '';
+  $('appEventName').value = item ? (item.eventName || '') : '';
+  $('appEventUrl').value = item ? (item.eventUrl || '') : '';
+  $('appDate').value = item ? (item.appliedDate || '') : new Date().toISOString().slice(0, 10);
+  $('appStatus').value = item ? (item.status || 'Applied') : 'Applied';
+  $('appSquad').value = item ? (item.squad || '') : lineupNames();
+  $('appNotes').value = item ? (item.notes || '') : '';
+  elements.trackerModalTitle.textContent = item ? 'Edit event' : 'Log event';
+  elements.trackerModal.classList.remove('hidden');
+}
+
+function lineupNames() {
+  const names = [];
+  if (appState.profile.fullName) names.push(appState.profile.fullName);
+  appState.team.slots.forEach((id) => {
+    const person = personById(id);
+    if (person && person.name) names.push(person.name);
+  });
+  return names.join(', ') || 'Solo';
+}
+
+function initTracker() {
+  renderTracker('ALL');
+  elements.statusFilter.addEventListener('change', () => renderTracker(elements.statusFilter.value));
+  elements.addAppBtn.addEventListener('click', () => openTrackerEditor(null));
+  elements.closeTrackerModal.addEventListener('click', () => elements.trackerModal.classList.add('hidden'));
+  elements.cancelTrackerBtn.addEventListener('click', () => elements.trackerModal.classList.add('hidden'));
+  elements.trackerForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const data = new FormData(elements.trackerForm);
+    const entry = {
+      id: data.get('id') || ('app_' + Date.now()),
+      eventName: String(data.get('eventName') || '').trim(),
+      eventUrl: String(data.get('eventUrl') || '').trim(),
+      appliedDate: data.get('appliedDate'),
+      status: data.get('status'),
+      squad: String(data.get('squad') || '').trim(),
+      notes: String(data.get('notes') || '').trim()
+    };
+    if (!entry.eventName) return;
+    const index = appState.tracker.findIndex((a) => a.id === entry.id);
+    if (index >= 0) appState.tracker[index] = entry;
+    else appState.tracker.unshift(entry);
+    await Storage.set({ tracker: appState.tracker });
+    updateBadgeCounts();
+    renderTracker(elements.statusFilter.value);
+    elements.trackerModal.classList.add('hidden');
+    showToast('Event logged');
+  });
+  elements.trackerList.addEventListener('click', async (e) => {
+    const card = e.target.closest('.card');
+    if (!card) return;
+    const item = appState.tracker.find((a) => a.id === card.dataset.id);
+    if (!item) return;
+    if (e.target.closest('.edit-app')) { openTrackerEditor(item); return; }
+    if (e.target.closest('.delete-app')) {
+      if (!confirm('Delete this log?')) return;
+      appState.tracker = appState.tracker.filter((a) => a.id !== item.id);
+      await Storage.set({ tracker: appState.tracker });
+      updateBadgeCounts();
+      renderTracker(elements.statusFilter.value);
+    }
+  });
+}
+
+async function openTrackerModalForCurrentTab() {
+  let title = 'Hackathon';
+  let url = '';
+  if (ext && ext.tabs && ext.tabs.query) {
+    const tabs = await ext.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0]) {
+      url = tabs[0].url || '';
+      title = String(tabs[0].title || 'Hackathon').split(' - ')[0].split(' | ')[0].trim();
+    }
+  }
+  switchTab('tracker');
+  openTrackerEditor(null);
+  $('appEventName').value = title;
+  $('appEventUrl').value = url;
+  $('appSquad').value = lineupNames();
+  $('appDate').value = new Date().toISOString().slice(0, 10);
+  $('appStatus').value = 'Applied';
+}
+
+async function triggerPageAutofill() {
+  if (!ext || !ext.tabs) { showToast('Load the unpacked extension to fill live pages'); return; }
+  try {
+    const tabs = await ext.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs && tabs[0];
+    if (!tab || !tab.id) { showToast('No active tab'); return; }
+    elements.pageDetectBadge.textContent = 'Filling';
+    elements.pageDetectBadge.className = 'pill busy';
+    const response = await sendTab(tab.id, {
+      action: 'AUTOFILL_PAGE',
+      payload: {
+        profile: appState.profile,
+        teammates: appState.teammates,
+        team: appState.team,
+        snippets: appState.snippets
+      }
+    });
+    const count = response && response.filledCount ? response.filledCount : 0;
+    if (count > 0) {
+      const who = (response.names || []).filter(Boolean).join(', ');
+      showToast('Filled ' + count + (who ? ' · ' + who : ''));
+      elements.pageDetectBadge.textContent = 'Filled ' + count;
+      elements.pageDetectBadge.className = 'pill live';
+    } else {
+      showToast('No matching fields on this page');
+      elements.pageDetectBadge.textContent = 'No matches';
+      elements.pageDetectBadge.className = 'pill';
+    }
+  } catch (err) {
+    showToast('Open a normal web form first');
+    elements.pageDetectBadge.textContent = 'No form';
+    elements.pageDetectBadge.className = 'pill';
+  }
+}
+
+async function checkCurrentPageForms() {
+  if (!ext || !ext.tabs || !ext.tabs.query) return;
+  try {
+    const tabs = await ext.tabs.query({ active: true, currentWindow: true });
+    const tab = tabs && tabs[0];
+    if (!tab || !tab.url || /^(chrome|edge|about|moz-extension|chrome-extension):/.test(tab.url)) {
+      elements.pageDetectBadge.textContent = 'Ready';
+      return;
+    }
+    const response = await sendTab(tab.id, { action: 'CHECK_FORMS' });
+    if (response && response.hasForm) {
+      elements.pageDetectBadge.textContent = response.inputCount + ' fields';
+      elements.pageDetectBadge.className = 'pill live';
+    } else {
+      elements.pageDetectBadge.textContent = 'No form here';
+    }
+  } catch (err) {
+    elements.pageDetectBadge.textContent = 'Ready';
+  }
+}
+
+function applyImportedState() {
+  fillProfileForm();
+  renderSquad();
+  renderSnippets();
+  renderTracker(elements.statusFilter.value);
+  updateBadgeCounts();
+}
+
+function initSettings() {
+  elements.exportDataBtn.addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(appState, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'hackfill-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Backup downloaded');
+  });
+  elements.importDataInput.addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const imported = JSON.parse(reader.result);
+        appState.profile = imported.profile || {};
+        appState.teammates = imported.teammates || [];
+        appState.snippets = imported.snippets || [];
+        appState.tracker = imported.tracker || [];
+        appState.team = normalizeTeam(imported.team, appState.teammates);
+        syncSquadPos();
+        await Storage.set({
+          profile: appState.profile,
+          teammates: appState.teammates,
+          snippets: appState.snippets,
+          tracker: appState.tracker,
+          team: appState.team
+        });
+        applyImportedState();
+        showToast('Backup imported');
+      } catch (err) {
+        showToast('That file is not a HackFill backup');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+  elements.loadDemoBtn.addEventListener('click', async () => {
+    if (!confirm('Replace current data with the demo lineup?')) return;
+    const demo = JSON.parse(JSON.stringify(DEMO_DATA));
+    appState.profile = demo.profile;
+    appState.teammates = demo.teammates;
+    appState.snippets = demo.snippets;
+    appState.tracker = demo.tracker;
+    appState.team = demo.team;
+    syncSquadPos();
+    await Storage.set(appState);
+    applyImportedState();
+    showToast('Demo lineup loaded');
+  });
+  elements.clearDataBtn.addEventListener('click', async () => {
+    if (!confirm('Clear your profile, squad, answers, and log?')) return;
+    appState.profile = {};
+    appState.teammates = [];
+    appState.snippets = [];
+    appState.tracker = [];
+    appState.team = { size: 1, slots: [] };
+    await Storage.set({
+      profile: {},
+      teammates: [],
+      snippets: [],
+      tracker: [],
+      team: appState.team
+    });
+    applyImportedState();
+    showToast('All data cleared');
+  });
+}
+
+function closeTopModal() {
+  if (elements.teammateModal && !elements.teammateModal.classList.contains('hidden')) {
+    clearTimeout(teammateSaveTimer);
+    persistTeammateFromForm();
+    elements.teammateModal.classList.add('hidden');
+    return;
+  }
+  [elements.snippetModal, elements.trackerModal].forEach((modal) => {
+    if (modal && !modal.classList.contains('hidden')) modal.classList.add('hidden');
+  });
 }
